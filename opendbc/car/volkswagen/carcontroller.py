@@ -96,7 +96,9 @@ class CarController(CarControllerBase):
     self.lead_distance_bars_last = None
     self.distance_bar_frame = 0
     self.gra_acc_counter_last = None
-    self.hca_mitigation = HCAMitigation(self.CCP, eps_timer_workaround=bool(CP.flags & VolkswagenFlags.MLB))
+    self.hca_mitigation = HCAMitigation(self.CCP)
+    # B8PA 实测原厂 ALA 用 HCA Status 5 (oscar 的 Q5 用 7)
+    self.hca_mode = 5 if CP.carFingerprint == "AUDI_A4_B8PA" else 7
 
     self.last_set_speed = 0
     self.last_lead_distance_bars = 0
@@ -155,7 +157,11 @@ class CarController(CarControllerBase):
         apply_torque = self.hca_mitigation.update(apply_torque, self.apply_torque_last, new_torque)
         hca_enabled = apply_torque != 0
         self.apply_torque_last = apply_torque
-        can_sends.append(self.CCS.create_steering_control(self.packer_pt, self.CAN.pt, apply_torque, hca_enabled))
+        if self.CP.flags & VolkswagenFlags.MLB:
+          can_sends.append(self.CCS.create_steering_control(self.packer_pt, self.CAN.pt, apply_torque, hca_enabled,
+                                                            hca_mode=self.hca_mode))
+        else:
+          can_sends.append(self.CCS.create_steering_control(self.packer_pt, self.CAN.pt, apply_torque, hca_enabled))
 
       if self.CP.flags & VolkswagenFlags.STOCK_HCA_PRESENT:
         # Pacify VW Emergency Assist driver inactivity detection by changing its view of driver steering input torque

@@ -522,6 +522,15 @@ class CAR(Platforms):
     chassis_codes={"8R"},
     wmis={WMI.AUDI_EUROPE_MPV, WMI.AUDI_GERMANY_CAR},
   )
+  # Audi A4/A4L B8PA (8K) facelift only — pre-facelift B8 lacks EPS
+  AUDI_A4_B8PA = VolkswagenMLBPlatformConfig(
+    [VWCarDocs("Audi A4/A4L (B8.5) 2013-16")],
+    VolkswagenCarSpecs(mass=1750, wheelbase=2.869,
+                       minEnableSpeed=15 * CV.KPH_TO_MS),
+    chassis_codes={"8K"},
+    # WAU = 德国产(进口A4/A5); LFV = 一汽奥迪长春产 A4L
+    wmis={WMI.AUDI_GERMANY_CAR, WMI.VOLKSWAGEN_CHINA_FAW},
+  )
   PORSCHE_MACAN_MK1 = VolkswagenMLBPlatformConfig(
     [VWCarDocs("Porsche Macan 2017-24")],
     VolkswagenCarSpecs(mass=1895, wheelbase=2.81, steerRatio=16.2),

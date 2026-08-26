@@ -1010,6 +1010,23 @@ FW_VERSIONS = {
       b'\xf1\x878R0907561A\x00\xf1\x890410\xf1\x80100',
     ],
   },
+  CAR.AUDI_A4_B8PA: {
+    (Ecu.engine, 0x7e0, None): [
+      b'\xf1\x878K2907115AG\xf1\x890004',
+    ],
+    (Ecu.transmission, 0x7e1, None): [
+      b'\xf1\x878K0927158AD\xf1\x891005',
+    ],
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x878K0959655G \xf1\x890560',
+    ],
+    (Ecu.eps, 0x712, None): [
+      b'\xf1\x878K0909144G \xf1\x890508',
+    ],
+    (Ecu.fwdRadar, 0x757, None): [
+      b'\xf1\x878K0907561B\x00\xf1\x890100',
+    ],
+  },
   CAR.PORSCHE_MACAN_MK1: {
     (Ecu.engine, 0x7e0, None): [
       b'\xf1\x8795B906259BJ\xf1\x890001',
