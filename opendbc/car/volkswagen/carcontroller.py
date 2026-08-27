@@ -96,7 +96,7 @@ class CarController(CarControllerBase):
     self.lead_distance_bars_last = None
     self.distance_bar_frame = 0
     self.gra_acc_counter_last = None
-    self.hca_mitigation = HCAMitigation(self.CCP)
+    self.hca_mitigation = HCAMitigation(self.CCP, eps_timer_workaround=bool(CP.flags & VolkswagenFlags.MLB))
     # B8PA 实测原厂 ALA 用 HCA Status 5 (oscar 的 Q5 用 7)
     self.hca_mode = 5 if CP.carFingerprint == "AUDI_A4_B8PA" else 7
 
