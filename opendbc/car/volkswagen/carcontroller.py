@@ -35,8 +35,10 @@ class HCAMitigation:
       self._frames_for_mitigation_start = self.MLB_LOCKOUT_MITIGATION_START / DT_CTRL
       self._frames_for_low_torque = self.MLB_LOCKOUT_LOW_TORQUE_TIME / DT_CTRL
       self._frames_for_reset = CCP.STEER_TIME_RESET / DT_CTRL
+      self._in_reset_window = False  # A: surfaced from HCAMitigation.update()
 
-  def update(self, apply_torque, apply_torque_last, desired_torque):
+
+  def update(self, apply_torque, apply_torque_last, desired_torque, lat_active=True):
     if apply_torque != 0 and apply_torque_last == apply_torque:
       self._same_torque_frames += 1
       if self._same_torque_frames > self._max_same_torque_frames:
@@ -49,26 +51,43 @@ class HCAMitigation:
     # ~2.0s lockout period it will return to accepting torque requests by itself. This max engagement timer can also be reset by disabling control for ~1.1s.
     # Attempt to mitigate this by opportunistically disabling HCA during periods of low torque desired.
     if self._eps_timer_workaround:
-      self._hca_active_frames += self._steer_step
-
-      if (self._hca_active_frames >= self._frames_for_mitigation_start
-          and abs(desired_torque) <= self.MLB_LOCKOUT_LOW_TORQUE):
-        self._low_torque_frames += self._steer_step
-      else:
+      if not lat_active:
+        # While HCA is inactive the wire already carries Status=3, so the
+        # rack's 6-min engagement timer resets by itself. Keep the software
+        # model of that timer zeroed and never request a deliberate reset.
+        self._hca_active_frames = 0
         self._low_torque_frames = 0
-
-      # Only disable HCA if desired torque is <=0.6Nm for 0.5 seconds continuously. A desired torque > 0.6Nm will also abort any in progress reset.
-      if self._low_torque_frames >= self._frames_for_low_torque:
-        apply_torque = 0
-
-      if apply_torque == 0:
-        self._hca_inactive_frames += self._steer_step
-        if self._hca_inactive_frames >= self._frames_for_reset:
-          self._hca_active_frames = 0
-      else:
         self._hca_inactive_frames = 0
+        self._in_reset_window = False
+      else:
+        self._hca_active_frames += self._steer_step
 
-    return apply_torque
+        if (self._hca_active_frames >= self._frames_for_mitigation_start
+            and abs(desired_torque) <= self.MLB_LOCKOUT_LOW_TORQUE):
+          self._low_torque_frames += self._steer_step
+        else:
+          self._low_torque_frames = 0
+
+        # Only disable HCA if desired torque is <=0.6Nm for 0.5 seconds continuously. A desired torque > 0.6Nm will also abort any in progress reset.
+        # A: in_reset_window is True ONLY while this deliberate reset is being
+        # applied. Ordinary zero-torque frames (straight roads) must NOT set it,
+        # otherwise hca_enabled would still flicker with torque.
+        resetting = self._low_torque_frames >= self._frames_for_low_torque
+        if resetting:
+          apply_torque = 0
+          self._hca_inactive_frames += self._steer_step
+          if self._hca_inactive_frames >= self._frames_for_reset:
+            # Status=3 has now been on the wire long enough for the rack's
+            # 6-min timer to clear; restart the software model of it.
+            self._hca_active_frames = 0
+        else:
+          self._hca_inactive_frames = 0
+        self._in_reset_window = resetting
+    else:
+      # workaround disabled: never reset
+      self._in_reset_window = False
+
+    return apply_torque, self._in_reset_window
 
 
 class CarController(CarControllerBase):
@@ -154,8 +173,17 @@ class CarController(CarControllerBase):
           new_torque = int(round(actuators.torque * self.CCP.STEER_MAX))
           apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last, CS.out.steeringTorque, self.CCP)
 
-        apply_torque = self.hca_mitigation.update(apply_torque, self.apply_torque_last, new_torque)
-        hca_enabled = apply_torque != 0
+        apply_torque, in_reset_frame = self.hca_mitigation.update(apply_torque, self.apply_torque_last, new_torque,
+                                                                  CC.latActive)
+        if self.CP.flags & VolkswagenFlags.MLB:
+          # A (MLB only): bind hca_enabled to latActive (not just nonzero torque)
+          # so the cluster lane-keep lamp stays continuously lit during the
+          # activation. The deliberate EPS-timer reset window (~1.1s after
+          # sustained low torque) is the only time we drop to Status=3.
+          # MQB/PQ keep upstream semantics (their clusters key off LDW_02).
+          hca_enabled = CC.latActive and not in_reset_frame
+        else:
+          hca_enabled = apply_torque != 0
         self.apply_torque_last = apply_torque
         if self.CP.flags & VolkswagenFlags.MLB:
           can_sends.append(self.CCS.create_steering_control(self.packer_pt, self.CAN.pt, apply_torque, hca_enabled,
@@ -236,7 +264,14 @@ class CarController(CarControllerBase):
         lead_distance = 0
         if hud_control.leadVisible and self.frame * DT_CTRL > 1.0:  # Don't display lead until we know the scaling factor
           lead_distance = 512 if CS.upscale_lead_car_signal else 8
-        acc_hud_status = self.CCS.acc_hud_status_value(CS.out.cruiseState.available, CS.out.accFaulted, CC.longActive)
+        if self.CP.flags & VolkswagenFlags.MLB:
+          # D (MLB only): gas override -> ACC Status_Anzeige=4 so the cluster
+          # ACC lamp turns off while the driver holds the throttle.
+          acc_hud_status = self.CCS.acc_hud_status_value(CS.out.cruiseState.available, CS.out.accFaulted,
+                                                         CC.longActive, gas_pressed=CS.out.gasPressed)
+        else:
+          acc_hud_status = self.CCS.acc_hud_status_value(CS.out.cruiseState.available, CS.out.accFaulted,
+                                                         CC.longActive)
         # FIXME: PQ may need to use the on-the-wire mph/kmh toggle to fix rounding errors
         # FIXME: Detect clusters with vEgoCluster offsets and apply an identical vCruiseCluster offset
         set_speed = hud_control.setSpeed * CV.MS_TO_KPH

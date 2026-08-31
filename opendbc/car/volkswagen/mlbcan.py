@@ -1,5 +1,4 @@
-from opendbc.car.volkswagen.mqbcan import (volkswagen_mqb_meb_checksum, xor_checksum,
-                                           create_lka_hud_control as mqb_create_lka_hud_control)
+from opendbc.car.volkswagen.mqbcan import volkswagen_mqb_meb_checksum, xor_checksum
 
 # TODO: Parameterize the hca control type (5 vs 7) and consolidate with MQB (and PQ?)
 def create_steering_control(packer, bus, apply_steer, lkas_enabled, hca_mode=7):
@@ -14,8 +13,55 @@ def create_steering_control(packer, bus, apply_steer, lkas_enabled, hca_mode=7):
   return packer.make_can_msg("HCA_01", bus, values)
 
 
-def create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control):
-  return mqb_create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control)
+def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_pressed, hud_alert, hud_control,
+                           v_ego=0.0):
+  # MLB-tuned LDW_02.
+  #
+  # We deliberately do NOT pass through the stock camera's DLC/TLC/Seite the
+  # way the MQB version does: while OP is steering, the camera's departure
+  # estimate does not describe OP's driving state, and mixing it with our
+  # LED/Lernmodus bits gives the cluster an inconsistent picture. Conservative
+  # "clear" geometry is synthesized instead. Real geometry from modelV2
+  # laneLines is future work (needs controlsd-side integration); until then
+  # the cluster will not render the red departure line.
+  #
+  # rlog evidence (route_b8pa, stock driving): DLC > 0 = clear of the line
+  # (+0.4..+1.24 m in normal driving), DLC <= 0 = touching/crossing the line
+  # (-0.49..-0.94 m during the 14 departure events). So the safe value is the
+  # positive rail (+1.25 m); a negative value would read as "over the line".
+  #
+  # LDW_Seite_DLCTLC is a 1-bit field. Which value means which side could not
+  # be derived from rlog and must be calibrated on-car. Mapping below is the
+  # assumed default; flagged TODO for on-car verification.
+  values = {}
+  if len(ldw_stock_values):
+    values = {s: ldw_stock_values[s] for s in [
+      "LDW_SW_Warnung_links",
+      "LDW_SW_Warnung_rechts",
+    ]}
+
+  # Side of imminent departure (1-bit; mapping unverified, see header comment)
+  if hud_control.leftLaneDepart and not hud_control.rightLaneDepart:
+    values["LDW_Seite_DLCTLC"] = 0  # TODO(on-car): verify 0 == left on B8PA
+  elif hud_control.rightLaneDepart and not hud_control.leftLaneDepart:
+    values["LDW_Seite_DLCTLC"] = 1  # TODO(on-car): verify 1 == right on B8PA
+
+  # Conservative geometry: far from either line, no imminent crossing, so the
+  # cluster never draws a spurious red line. DBC ranges: DLC [-1.25,+1.25] m,
+  # TLC [0,3.0] s.
+  values["LDW_DLC"] = 1.25
+  values["LDW_TLC"] = 3.0
+
+  values.update({
+    "LDW_Status_LED_gelb": 1 if lat_active and steering_pressed else 0,
+    "LDW_Status_LED_gruen": 1 if lat_active and not steering_pressed else 0,
+    # Lernmodus: this cluster does not read these bits (rlog: stock sends them
+    # constantly 0 and the display still works). Kept MQB-compatible.
+    "LDW_Lernmodus_links": 3 if hud_control.leftLaneDepart else 1 + hud_control.leftLaneVisible,
+    "LDW_Lernmodus_rechts": 3 if hud_control.rightLaneDepart else 1 + hud_control.rightLaneVisible,
+    "LDW_Texte": hud_alert,
+  })
+  return packer.make_can_msg("LDW_02", bus, values)
 
 
 def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resume=False):
@@ -68,8 +114,17 @@ def create_acc_accel_control(packer, bus, acc_type, acc_enabled, accel, acc_cont
   return commands
 
 
-def acc_hud_status_value(main_switch_on, acc_faulted, long_active):
-  # TODO: happens to resemble the ACC control value for now, but extend this for init/gas override later
+def acc_hud_status_value(main_switch_on, acc_faulted, long_active, gas_pressed=False):
+  # Status=4 = "background override": driver pressing gas pedal while longActive.
+  # rlog evidence (route_b8pa, 60447 frames): stock car shows Status=4 + Prim=0
+  # when driver takes over with throttle; OP without this fix left Prim=1 (green
+  # ACC icon) which contradicts the stock cluster display.
+  # This is the MLB-private implementation; the MQB/MEB/PQ version in
+  # mqbcan.py is unchanged.
+  if acc_faulted:
+    return acc_control_value(main_switch_on, acc_faulted, long_active)
+  if long_active and gas_pressed:
+    return 4
   return acc_control_value(main_switch_on, acc_faulted, long_active)
 
 
