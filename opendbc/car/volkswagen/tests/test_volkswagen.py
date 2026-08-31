@@ -5,7 +5,7 @@ import unittest
 from opendbc.car import DT_CTRL
 from opendbc.car.structs import CarParams
 from opendbc.car.volkswagen.carcontroller import HCAMitigation
-from opendbc.car.volkswagen.values import CAR, CarControllerParams as CCP, FW_QUERY_CONFIG, WMI
+from opendbc.car.volkswagen.values import CAR, CHECK_FUZZY_ECUS, CarControllerParams as CCP, FW_QUERY_CONFIG, WMI
 from opendbc.car.volkswagen.fingerprints import FW_VERSIONS
 
 Ecu = CarParams.Ecu
@@ -96,9 +96,13 @@ class TestVolkswagenPlatformConfigs(unittest.TestCase):
                            f"Shared chassis codes: {comp}"
 
   def test_custom_fuzzy_fingerprinting(self):
-    all_radar_fw = list({fw for ecus in FW_VERSIONS.values() for fw in ecus[Ecu.fwdRadar, 0x757, None]})
+    all_radar_fw = list({fw for ecus in FW_VERSIONS.values() for fw in ecus.get((Ecu.fwdRadar, 0x757, None), [])})
 
     for platform in CAR:
+      # Platforms without a fwdRadar FW entry (e.g. AUDI_A4_B8PA, whose unverified
+      # radar entry was dropped) cannot participate in fuzzy fingerprinting
+      if not any(ecu[0] in CHECK_FUZZY_ECUS for ecu in FW_VERSIONS.get(platform, {})):
+        continue
       with self.subTest(platform=platform.name):
         for wmi in WMI:
           for chassis_code in platform.config.chassis_codes | {"00"}:
