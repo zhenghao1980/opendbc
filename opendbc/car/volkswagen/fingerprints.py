@@ -1010,6 +1010,19 @@ FW_VERSIONS = {
       b'\xf1\x878R0907561A\x00\xf1\x890410\xf1\x80100',
     ],
   },
+  CAR.AUDI_A4_B8PA: {
+    (Ecu.engine, 0x7e0, None): [
+      b'\xf1\x878K2907115AG\xf1\x890004',
+    ],
+    (Ecu.transmission, 0x7e1, None): [
+      b'\xf1\x878K0927158AD\xf1\x891005',
+    ],
+    (Ecu.srs, 0x715, None): [
+      b'\xf1\x878K0959655G \xf1\x890560\xf1\x82\x040M04070E',  # \xf1\x82 段为 carFw 实测
+    ],
+    # eps(0x712)/fwdRadar(0x757) 条目删除: J533 线束下这两个 ECU 不应答诊断查询
+    # (route 实测), 保留未验证字节有失配风险; 拿到实测字节后再补
+  },
   CAR.PORSCHE_MACAN_MK1: {
     (Ecu.engine, 0x7e0, None): [
       b'\xf1\x8795B906259BJ\xf1\x890001',
