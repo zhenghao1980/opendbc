@@ -96,6 +96,16 @@ static void volkswagen_mlb_rx_hook(const CANPacket_t *msg) {
       }
     }
 
+    // Enter controls on falling edge of ALA button (lane keep assist stalk button)
+    // Signal: BCM_01.ALA_TASTE
+    if (msg->addr == MSG_BCM_01) {
+      bool ala_button = GET_BIT(msg, 37U);
+      if (volkswagen_ala_button_prev && !ala_button) {
+        controls_allowed = true;
+      }
+      volkswagen_ala_button_prev = ala_button;
+    }
+
     // Signal: Motor_03.MO_Fahrpedalrohwert_01
     // Signal: Motor_03.MO_BLS (bit 34)
     if (msg->addr == MSG_MOTOR_03) {

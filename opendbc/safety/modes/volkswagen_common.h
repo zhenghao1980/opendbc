@@ -14,6 +14,9 @@ bool volkswagen_set_button_prev = false;
 extern bool volkswagen_resume_button_prev;
 bool volkswagen_resume_button_prev = false;
 
+extern bool volkswagen_ala_button_prev;
+bool volkswagen_ala_button_prev = false;
+
 extern bool volkswagen_brake_pedal_switch;
 extern bool volkswagen_brake_pressure_detected;
 bool volkswagen_brake_pedal_switch = false;
@@ -38,11 +41,13 @@ bool volkswagen_brake_pressure_detected = false;
 #define MSG_LS_01       0x10BU   // TX by OP, ACC control buttons for cancel/resume
 #define MSG_MOTOR_03    0x105U   // RX from ECU, for driver throttle input and brake switch status
 #define MSG_TSK_04      0x10EU   // RX from ECU, for ACC status from drivetrain coordinator
+#define MSG_BCM_01      0x526U   // RX from BCM, for ALA (lane keep assist) button
 
 static void volkswagen_common_init(void) {
   volkswagen_longitudinal = false;
   volkswagen_set_button_prev = false;
   volkswagen_resume_button_prev = false;
+  volkswagen_ala_button_prev = false;
   volkswagen_brake_pedal_switch = false;
   volkswagen_brake_pressure_detected = false;
   gen_crc_lookup_table_8(0x2F, volkswagen_crc8_lut_8h2f);
