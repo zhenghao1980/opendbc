@@ -83,6 +83,19 @@ class TestVolkswagenMlbSafetyBase(common.CarSafetyTest, common.DriverTorqueSteer
               "LS_Hauptschalter": main_switch}
     return self.packer.make_can_msg_safety("LS_01", bus, values)
 
+  # ALA (lane keep assist) stalk button
+  def _bcm_msg(self, ala=0):
+    values = {"ALA_TASTE": ala}
+    return self.packer.make_can_msg_safety("BCM", 0, values)
+
+  def test_ala_button(self):
+    # Enter controls on falling edge of ALA button
+    self.safety.set_controls_allowed(0)
+    self._rx(self._bcm_msg(ala=1))
+    self.assertFalse(self.safety.get_controls_allowed(), "controls allowed on ALA rising edge")
+    self._rx(self._bcm_msg(ala=0))
+    self.assertTrue(self.safety.get_controls_allowed(), "controls not allowed on ALA falling edge")
+
   # Verify brake_pressed is true if either the switch or pressure threshold signals are true
   def test_redundant_brake_signals(self):
     test_combinations = [(True, True, True), (True, True, False), (True, False, True), (False, False, False)]
