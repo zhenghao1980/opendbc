@@ -96,6 +96,22 @@ class TestVolkswagenMlbSafetyBase(common.CarSafetyTest, common.DriverTorqueSteer
     self._rx(self._bcm_msg(ala=0))
     self.assertTrue(self.safety.get_controls_allowed(), "controls not allowed on ALA falling edge")
 
+  def test_brake_disengage_alt_experience(self):
+    # Stock behavior: brake press while moving clears controls_allowed
+    self._rx(self._speed_msg(10))
+    self.safety.set_controls_allowed(1)
+    self._rx(self._user_brake_msg(True))
+    self.assertFalse(self.safety.get_controls_allowed(), "controls still allowed after brake press")
+    self._rx(self._user_brake_msg(False))
+
+    # With ALT_EXP_DISABLE_DISENGAGE_ON_BRAKE: brake must not clear controls_allowed
+    # (used by separate lateral control where brake only cancels longitudinal)
+    self.safety.set_alternative_experience(32)  # ALT_EXP_DISABLE_DISENGAGE_ON_BRAKE
+    self.safety.set_controls_allowed(1)
+    self._rx(self._user_brake_msg(True))
+    self.assertTrue(self.safety.get_controls_allowed(), "controls not allowed with brake press under alt experience")
+    self.safety.set_alternative_experience(0)
+
   # Verify brake_pressed is true if either the switch or pressure threshold signals are true
   def test_redundant_brake_signals(self):
     test_combinations = [(True, True, True), (True, True, False), (True, False, True), (False, False, False)]

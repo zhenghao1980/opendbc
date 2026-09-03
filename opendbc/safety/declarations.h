@@ -320,6 +320,11 @@ extern CurvatureSteeringState curvature_state;
 // This flag allows AEB to be commanded from openpilot.
 #define ALT_EXP_ALLOW_AEB 16
 
+// Disengage on brake pedal press is a stock safety feature. With this flag the
+// brake pedal does not clear controls_allowed. Used by the separate lateral
+// control mode where brake only cancels longitudinal and lateral remains active.
+#define ALT_EXP_DISABLE_DISENGAGE_ON_BRAKE 32
+
 extern int alternative_experience;
 
 // time since safety mode has been changed
