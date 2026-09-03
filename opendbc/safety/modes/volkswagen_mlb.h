@@ -86,6 +86,9 @@ static void volkswagen_mlb_rx_hook(const CANPacket_t *msg) {
         if ((volkswagen_set_button_prev && !set_button) ||
             (volkswagen_resume_button_prev && !resume_button)) {
           controls_allowed = GET_BIT(msg, 12U);  // LS_Hauptschalter
+          // re-arm the heartbeat mismatch grace period so a quick re-engagement
+          // right after a disengage can not be cleared by a pending third strike
+          heartbeat_engaged_mismatches = 0U;
         }
         volkswagen_set_button_prev = set_button;
         volkswagen_resume_button_prev = resume_button;
@@ -103,6 +106,9 @@ static void volkswagen_mlb_rx_hook(const CANPacket_t *msg) {
       bool ala_button = GET_BIT(msg, 37U);
       if (volkswagen_ala_button_prev && !ala_button) {
         controls_allowed = true;
+        // re-arm the heartbeat mismatch grace period so a quick re-engagement
+        // right after a disengage can not be cleared by a pending third strike
+        heartbeat_engaged_mismatches = 0U;
       }
       volkswagen_ala_button_prev = ala_button;
     }
