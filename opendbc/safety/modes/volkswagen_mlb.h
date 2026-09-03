@@ -42,6 +42,7 @@ static safety_config volkswagen_mlb_init(uint16_t param) {
     {.msg = {{MSG_TSK_04, 1, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MSG_MOTOR_03, 0, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MSG_LS_01, 0, 4, 10U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    {.msg = {{MSG_BCM_01, 0, 8, 10U, .max_counter = 0U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MSG_ACC_02, 2, 8, 16U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
   };
 
