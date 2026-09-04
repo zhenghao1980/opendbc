@@ -54,6 +54,30 @@ def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_p
   return packer.make_can_msg("LDW_02", bus, values)
 
 
+# B8 cluster lane-keep lamp is driven by camera message 0x30A byte2, NOT by the
+# LDW_02 (0x397) LED bits (those are D4/C7-era and ignored by the B8 Kombi —
+# rlog-verified: OP's LDW_02 LED green frames never changed the lamp, while the
+# camera's 0x30A byte2 tracked it exactly). byte2: 0x00=off, 0x88=yellow,
+# 0x10=green (lanes-ok bit; stock sets it only above ~60 km/h with clear lanes).
+# No checksum, no counter; byte7 is always 0x80.
+LKA_LAMP_OFF = 0x00
+LKA_LAMP_GREEN = 0x10
+LKA_LAMP_YELLOW = 0x88
+
+
+def create_lka_lamp_control(packer, bus, lat_active, steering_pressed, v_ego=None):
+  # Same yellow-wins precedence as create_lka_hud_control: driver override or
+  # standstill -> yellow; plain latActive -> green; otherwise off.
+  standstill = v_ego is not None and v_ego < LANE_KEEP_STANDSTILL_M_S
+  yellow = lat_active and (steering_pressed or standstill)
+  green = lat_active and not yellow
+  byte2 = LKA_LAMP_YELLOW if yellow else (LKA_LAMP_GREEN if green else LKA_LAMP_OFF)
+  return packer.make_can_msg("LKA_LAMP", bus, {
+    "LKA_Lamp_State": byte2,
+    "LKA_Lamp_Const": 0x80,
+  })
+
+
 def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resume=False):
   values = {s: gra_stock_values[s] for s in [
     "LS_Hauptschalter",

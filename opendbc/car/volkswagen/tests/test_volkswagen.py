@@ -8,7 +8,8 @@ from opendbc.can.dbc import DBC
 from opendbc.can.packer import CANPacker
 from opendbc.car.volkswagen.carcontroller import HCAMitigation
 from opendbc.car.volkswagen.mlbcan import LANE_KEEP_STANDSTILL_M_S, create_lka_hud_control as mlb_create_lka_hud_control, \
-                                          volkswagen_mlb_checksum
+                                          create_lka_lamp_control, volkswagen_mlb_checksum, \
+                                          LKA_LAMP_OFF, LKA_LAMP_GREEN, LKA_LAMP_YELLOW
 from opendbc.car.volkswagen.mqbcan import create_lka_hud_control as mqb_create_lka_hud_control
 from opendbc.car.volkswagen.values import CAR, CHECK_FUZZY_ECUS, CarControllerParams as CCP, FW_QUERY_CONFIG, WMI
 from opendbc.car.volkswagen.fingerprints import FW_VERSIONS
@@ -135,6 +136,29 @@ class TestVolkswagenLkaHudControl(unittest.TestCase):
       sig = DBC(dbc_name).addr_to_msg[addr].sigs["LDW_Status_LED_gruen"]
       raw = int.from_bytes(dat, "little") >> sig.lsb & ((1 << sig.size) - 1)
       self.assertEqual(raw, 1, f"{dbc_name}: legacy call should still produce green")
+
+  def test_lka_lamp_control(self):
+    """0x30A LKA_LAMP: B8 Kombi lane-keep lamp. byte2 = 0x00 off / 0x88 yellow / 0x10 green,
+    byte7 always 0x80, everything else zero, no checksum/counter."""
+    packer = CANPacker("vw_mlb")
+    cases = [
+      # (lat_active, steering_pressed, v_ego, expected_byte2)
+      (False, False, 10.0, LKA_LAMP_OFF),
+      (False, False, 0.0,  LKA_LAMP_OFF),
+      (True,  False, 10.0, LKA_LAMP_GREEN),
+      (True,  False, 0.0,  LKA_LAMP_YELLOW),
+      (True,  True,  10.0, LKA_LAMP_YELLOW),
+      (True,  False, None, LKA_LAMP_GREEN),   # v_ego unknown -> legacy green
+    ]
+    for lat, sp, v, want in cases:
+      with self.subTest(lat_active=lat, steering_pressed=sp, v_ego=v):
+        addr, dat, _ = create_lka_lamp_control(packer, 0, lat, sp, v_ego=v)
+        self.assertEqual(addr, 0x30A)
+        self.assertEqual(len(dat), 8)
+        self.assertEqual(dat[2], want)
+        self.assertEqual(dat[7], 0x80)
+        for i in (0, 1, 3, 4, 5, 6):
+          self.assertEqual(dat[i], 0, f"byte{i} must stay zero")
 
   def test_mlb_checksum_golden_values(self):
     """Guards the MLB-local CRC8 constant table (moved out of mqbcan) and XOR seeding."""

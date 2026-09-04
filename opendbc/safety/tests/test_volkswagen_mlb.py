@@ -15,6 +15,7 @@ MSG_ACC_02 = 0x30C      # TX by OP, ACC HUD data to the instrument cluster
 MSG_LS_01 = 0x10B       # TX by OP, ACC control buttons for cancel/resume
 MSG_HCA_01 = 0x126      # TX by OP, Heading Control Assist steering torque
 MSG_LDW_02 = 0x397      # TX by OP, Lane line recognition and text alerts
+MSG_LKA_LAMP = 0x30A    # TX by OP, B8 Kombi lane-keep lamp state
 
 # ACC_01.ACC_Status_ACC
 ACC_AKTIV_REGELT = 3
@@ -22,7 +23,7 @@ ACC_OVERRIDE = 4
 
 
 class TestVolkswagenMlbSafetyBase(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTest):
-  RELAY_MALFUNCTION_ADDRS = {0: (MSG_HCA_01, MSG_LDW_02)}
+  RELAY_MALFUNCTION_ADDRS = {0: (MSG_HCA_01, MSG_LDW_02, MSG_LKA_LAMP)}
 
   MAX_RATE_UP = 9
   MAX_RATE_DOWN = 10
@@ -161,8 +162,8 @@ class TestVolkswagenMlbSafetyBase(common.CarSafetyTest, common.DriverTorqueSteer
 
 
 class TestVolkswagenMlbStockSafety(TestVolkswagenMlbSafetyBase):
-  TX_MSGS = [[MSG_HCA_01, 0], [MSG_LDW_02, 0], [MSG_LS_01, 0], [MSG_LS_01, 2]]
-  FWD_BLACKLISTED_ADDRS = {2: [MSG_HCA_01, MSG_LDW_02]}
+  TX_MSGS = [[MSG_HCA_01, 0], [MSG_LDW_02, 0], [MSG_LKA_LAMP, 0], [MSG_LS_01, 0], [MSG_LS_01, 2]]
+  FWD_BLACKLISTED_ADDRS = {2: [MSG_HCA_01, MSG_LDW_02, MSG_LKA_LAMP]}
   FWD_BUS_LOOKUP = {0: 2, 2: 0}
 
   def setUp(self):
@@ -189,10 +190,10 @@ class TestVolkswagenMlbStockSafety(TestVolkswagenMlbSafetyBase):
 
 
 class TestVolkswagenMlbLongSafety(TestVolkswagenMlbSafetyBase):
-  TX_MSGS = [[MSG_HCA_01, 0], [MSG_LS_01, 0], [MSG_LS_01, 2], [MSG_LDW_02, 0],
+  TX_MSGS = [[MSG_HCA_01, 0], [MSG_LS_01, 0], [MSG_LS_01, 2], [MSG_LDW_02, 0], [MSG_LKA_LAMP, 0],
              [MSG_ACC_02, 0], [MSG_ACC_01, 0]]
-  FWD_BLACKLISTED_ADDRS = {2: [MSG_HCA_01, MSG_LDW_02, MSG_ACC_02, MSG_ACC_01]}
-  RELAY_MALFUNCTION_ADDRS = {0: (MSG_HCA_01, MSG_LDW_02, MSG_ACC_02, MSG_ACC_01)}
+  FWD_BLACKLISTED_ADDRS = {2: [MSG_HCA_01, MSG_LDW_02, MSG_LKA_LAMP, MSG_ACC_02, MSG_ACC_01]}
+  RELAY_MALFUNCTION_ADDRS = {0: (MSG_HCA_01, MSG_LDW_02, MSG_LKA_LAMP, MSG_ACC_02, MSG_ACC_01)}
 
   def setUp(self):
     self.packer = CANPackerSafety("vw_mlb")

@@ -42,6 +42,7 @@ bool volkswagen_brake_pressure_detected = false;
 #define MSG_MOTOR_03    0x105U   // RX from ECU, for driver throttle input and brake switch status
 #define MSG_TSK_04      0x10EU   // RX from ECU, for ACC status from drivetrain coordinator
 #define MSG_BCM_01      0x526U   // RX from BCM, for ALA (lane keep assist) button
+#define MSG_LKA_LAMP     0x30AU   // TX by OP, B8 Kombi lane-keep lamp state (camera LKA lamp msg)
 
 static void volkswagen_common_init(void) {
   volkswagen_longitudinal = false;
