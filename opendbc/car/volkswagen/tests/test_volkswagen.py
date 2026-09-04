@@ -4,7 +4,11 @@ import unittest
 
 from opendbc.car import DT_CTRL
 from opendbc.car.structs import CarParams
+from opendbc.can.dbc import DBC
+from opendbc.can.packer import CANPacker
 from opendbc.car.volkswagen.carcontroller import HCAMitigation
+from opendbc.car.volkswagen.mlbcan import create_lka_hud_control as mlb_create_lka_hud_control
+from opendbc.car.volkswagen.mqbcan import LANE_KEEP_STANDSTILL_M_S, create_lka_hud_control as mqb_create_lka_hud_control
 from opendbc.car.volkswagen.values import CAR, CHECK_FUZZY_ECUS, CarControllerParams as CCP, FW_QUERY_CONFIG, WMI
 from opendbc.car.volkswagen.fingerprints import FW_VERSIONS
 
@@ -69,6 +73,88 @@ class TestVolkswagenHCAMitigation(unittest.TestCase):
     for _ in range(reset_calls):
       apply_torque = hca_mitigation.update(pinned_output, 0, 0)
     assert apply_torque == pinned_output, "EPS timer reset should complete and release steering"
+
+
+class TestVolkswagenLkaHudControl(unittest.TestCase):
+  """Lane-keep indicator lamp mapping for LDW_02 (green/yellow/off).
+
+  Yellow wins over green so the cluster never shows green while the driver
+  overrides steering or the car is at a standstill with latActive on.
+  Frames are packed through the real DBCs (no mocks) so signal-layout
+  regressions (bit positions, CHECKSUM/COUNTER autofill) are caught.
+  """
+
+  class _Hud:
+    def __init__(self, left_visible=True, right_visible=True, left_depart=False, right_depart=False):
+      self.leftLaneVisible = left_visible
+      self.rightLaneVisible = right_visible
+      self.leftLaneDepart = left_depart
+      self.rightLaneDepart = right_depart
+
+  @staticmethod
+  def _pack(dbc_name, impl, lat_active, steering_pressed, v_ego, stock=None):
+    packer = CANPacker(dbc_name)
+    addr, dat, _ = impl(packer, 0, stock or {}, lat_active, steering_pressed, 0,
+                        TestVolkswagenLkaHudControl._Hud(), v_ego=v_ego)
+    msg = DBC(dbc_name).addr_to_msg[addr]
+
+    def get(name):
+      sig = msg.sigs[name]
+      assert sig.is_little_endian, f"{name} decode helper only handles little-endian"
+      raw = int.from_bytes(dat, "little") >> sig.lsb & ((1 << sig.size) - 1)
+      return raw * sig.factor + sig.offset
+
+    return dat, get
+
+  def test_state_matrix(self):
+    cases = [
+      # (lat_active, steering_pressed, v_ego, expected_gruen, expected_gelb)
+      (False, False, 10.0, 0, 0),   # off
+      (False, False, 0.0,  0, 0),   # off at standstill
+      (False, True,  10.0, 0, 0),   # off, driver pressing
+      (True,  False, 10.0, 1, 0),   # active, driving -> green
+      (True,  False, 0.0,  0, 1),   # active, stopped -> yellow
+      (True,  True,  10.0, 0, 1),   # active, driver override -> yellow
+      (True,  True,  0.0,  0, 1),   # both yellow conditions
+      (True,  False, LANE_KEEP_STANDSTILL_M_S,        1, 0),  # at threshold -> green
+      (True,  False, LANE_KEEP_STANDSTILL_M_S - 0.05, 0, 1),  # just under -> yellow
+      (True,  False, LANE_KEEP_STANDSTILL_M_S + 0.05, 1, 0),  # just over -> green
+    ]
+    for dbc_name, impl in (("vw_mqb", mqb_create_lka_hud_control), ("vw_mlb", mlb_create_lka_hud_control)):
+      for lat_act, sp, v, eg, ey in cases:
+        with self.subTest(dbc=dbc_name, lat_active=lat_act, steering_pressed=sp, v_ego=v):
+          _, get = self._pack(dbc_name, impl, lat_act, sp, v)
+          self.assertEqual((get("LDW_Status_LED_gruen"), get("LDW_Status_LED_gelb")), (eg, ey))
+
+  def test_default_v_ego_keeps_legacy_behavior(self):
+    """Callers that don't pass v_ego get the pre-change mapping (green for plain lat_active)."""
+    for dbc_name, impl in (("vw_mqb", mqb_create_lka_hud_control), ("vw_mlb", mlb_create_lka_hud_control)):
+      packer = CANPacker(dbc_name)
+      addr, dat, _ = impl(packer, 0, {}, True, False, 0, self._Hud())
+      sig = DBC(dbc_name).addr_to_msg[addr].sigs["LDW_Status_LED_gruen"]
+      raw = int.from_bytes(dat, "little") >> sig.lsb & ((1 << sig.size) - 1)
+      self.assertEqual(raw, 1, f"{dbc_name}: no v_ego should still produce green")
+
+  def test_stock_values_passthrough(self):
+    """Seite/DLC/TLC/SW_Warnung must pass through from the stock camera frame."""
+    stock = {"LDW_SW_Warnung_links": 1, "LDW_SW_Warnung_rechts": 0,
+             "LDW_Seite_DLCTLC": 1, "LDW_DLC": 0.5, "LDW_TLC": 1.2}
+    for dbc_name, impl in (("vw_mqb", mqb_create_lka_hud_control), ("vw_mlb", mlb_create_lka_hud_control)):
+      with self.subTest(dbc=dbc_name):
+        _, get = self._pack(dbc_name, impl, True, False, 10.0, stock=stock)
+        self.assertEqual(get("LDW_SW_Warnung_links"), 1)
+        self.assertEqual(get("LDW_Seite_DLCTLC"), 1)
+        self.assertAlmostEqual(get("LDW_DLC"), 0.5, places=2)
+        self.assertAlmostEqual(get("LDW_TLC"), 1.2, places=2)
+
+  def test_mlb_checksum_counter_autofill(self):
+    """vw_mlb LDW_02 frames must carry a computed checksum and a rolling counter."""
+    packer = CANPacker("vw_mlb")
+    addr1, dat1, _ = mlb_create_lka_hud_control(packer, 0, {}, True, False, 0, self._Hud(), v_ego=10.0)
+    addr2, dat2, _ = mlb_create_lka_hud_control(packer, 0, {}, True, False, 0, self._Hud(), v_ego=10.0)
+    self.assertEqual(addr1, 0x397)
+    self.assertNotEqual(dat1[0], 0, "CHECKSUM byte must be computed")
+    self.assertEqual((dat1[1] & 0x0F) + 1, dat2[1] & 0x0F, "COUNTER must roll")
 
 
 class TestVolkswagenPlatformConfigs(unittest.TestCase):

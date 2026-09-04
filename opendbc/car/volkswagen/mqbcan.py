@@ -31,7 +31,24 @@ def create_eps_update(packer, bus, eps_stock_values, ea_simulated_torque):
   return packer.make_can_msg("LH_EPS_03", bus, values)
 
 
-def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_pressed, hud_alert, hud_control):
+# v_ego standstill threshold (m/s) for the yellow lane-keep indicator.
+# At ~1.8 km/h (0.5 m/s) the car is effectively stopped (traffic light,
+# stop-and-go creep) while openpilot lateral may still be active; the cluster
+# should show yellow ("engaged but not steering"), not green.
+# Threshold is intentionally above zero so the lamp doesn't bounce green/yellow
+# while creeping.
+LANE_KEEP_STANDSTILL_M_S = 0.5
+
+
+def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_pressed, hud_alert, hud_control,
+                           v_ego=None):
+  # v_ego=None means "not supplied": legacy callers keep previous behavior
+  # (no standstill yellow). Callers that want yellow-on-standstill must pass
+  # v_ego explicitly.
+  standstill = v_ego is not None and v_ego < LANE_KEEP_STANDSTILL_M_S
+  yellow = lat_active and (steering_pressed or standstill)
+  green = lat_active and not yellow
+
   values = {}
   if len(ldw_stock_values):
     values = {s: ldw_stock_values[s] for s in [
@@ -43,8 +60,8 @@ def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_p
     ]}
 
   values.update({
-    "LDW_Status_LED_gelb": 1 if lat_active and steering_pressed else 0,
-    "LDW_Status_LED_gruen": 1 if lat_active and not steering_pressed else 0,
+    "LDW_Status_LED_gelb": 1 if yellow else 0,
+    "LDW_Status_LED_gruen": 1 if green else 0,
     "LDW_Lernmodus_links": 3 if hud_control.leftLaneDepart else 1 + hud_control.leftLaneVisible,
     "LDW_Lernmodus_rechts": 3 if hud_control.rightLaneDepart else 1 + hud_control.rightLaneVisible,
     "LDW_Texte": hud_alert,

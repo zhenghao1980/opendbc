@@ -14,8 +14,9 @@ def create_steering_control(packer, bus, apply_steer, lkas_enabled, hca_mode=7):
   return packer.make_can_msg("HCA_01", bus, values)
 
 
-def create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control):
-  return mqb_create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control)
+def create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control, v_ego=None):
+  return mqb_create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control,
+                                    v_ego=v_ego)
 
 
 def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resume=False):
