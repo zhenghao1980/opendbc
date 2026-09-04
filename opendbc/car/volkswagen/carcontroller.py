@@ -219,9 +219,11 @@ class CarController(CarControllerBase):
         can_sends.append(self.CCS.create_lka_hud_control(self.packer_pt, self.CAN.pt, CS.ldw_stock_values, CC.latActive,
                                                          CS.out.steeringPressed, hud_alert, hud_control,
                                                          v_ego=CS.out.vEgo))
-        # B8 Kombi lane-keep lamp follows camera msg 0x30A byte2, not LDW_02 LED bits
+        # B8 Kombi lane-keep lamp follows camera msg 0x30A byte2, not LDW_02 LED bits;
+        # byte3/byte1 carry the FIS lane-line graphic (solid lines / departure warning)
         can_sends.append(self.CCS.create_lka_lamp_control(self.packer_pt, self.CAN.pt, CC.latActive,
-                                                          CS.out.steeringPressed, v_ego=CS.out.vEgo))
+                                                          CS.out.steeringPressed, v_ego=CS.out.vEgo,
+                                                          departing=hud_control.leftLaneDepart or hud_control.rightLaneDepart))
       else:
         can_sends.append(self.CCS.create_lka_hud_control(self.packer_pt, self.CAN.pt, CS.ldw_stock_values, CC.latActive,
                                                          CS.out.steeringPressed, hud_alert, hud_control))

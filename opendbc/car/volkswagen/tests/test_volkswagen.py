@@ -138,26 +138,34 @@ class TestVolkswagenLkaHudControl(unittest.TestCase):
       self.assertEqual(raw, 1, f"{dbc_name}: legacy call should still produce green")
 
   def test_lka_lamp_control(self):
-    """0x30A LKA_LAMP: B8 Kombi lane-keep lamp. byte2 = 0x00 off / 0x88 yellow / 0x10 green,
-    byte7 always 0x80, everything else zero, no checksum/counter."""
+    """0x30A LKA_LAMP: B8 Kombi lane-keep lamp + FIS lane-line graphic.
+    byte2 = 0x00 off / 0x88 yellow / 0x10 green; byte3 bit0 = lanes recognized
+    (solid lines, stock sets it exactly with green); byte3 bit1 + byte1 bit6 =
+    lane-departure warning (red line, gated on lat_active); byte7 always 0x80,
+    no checksum/counter."""
     packer = CANPacker("vw_mlb")
     cases = [
-      # (lat_active, steering_pressed, v_ego, expected_byte2)
-      (False, False, 10.0, LKA_LAMP_OFF),
-      (False, False, 0.0,  LKA_LAMP_OFF),
-      (True,  False, 10.0, LKA_LAMP_GREEN),
-      (True,  False, 0.0,  LKA_LAMP_YELLOW),
-      (True,  True,  10.0, LKA_LAMP_YELLOW),
-      (True,  False, None, LKA_LAMP_GREEN),   # v_ego unknown -> legacy green
+      # (lat_active, steering_pressed, v_ego, departing, byte2, byte3, byte1)
+      (False, False, 10.0, False, LKA_LAMP_OFF,    0x00, 0x00),
+      (False, False, 0.0,  False, LKA_LAMP_OFF,    0x00, 0x00),
+      (True,  False, 10.0, False, LKA_LAMP_GREEN,  0x01, 0x00),
+      (True,  False, 0.0,  False, LKA_LAMP_YELLOW, 0x00, 0x00),
+      (True,  True,  10.0, False, LKA_LAMP_YELLOW, 0x00, 0x00),
+      (True,  False, None, False, LKA_LAMP_GREEN,  0x01, 0x00),  # v_ego unknown -> legacy green
+      (True,  False, 10.0, True,  LKA_LAMP_GREEN,  0x03, 0x40),  # green + departure warning
+      (True,  True,  10.0, True,  LKA_LAMP_YELLOW, 0x02, 0x40),  # yellow + departure warning
+      (False, False, 10.0, True,  LKA_LAMP_OFF,    0x00, 0x00),  # departure gated off when inactive
     ]
-    for lat, sp, v, want in cases:
-      with self.subTest(lat_active=lat, steering_pressed=sp, v_ego=v):
-        addr, dat, _ = create_lka_lamp_control(packer, 0, lat, sp, v_ego=v)
+    for lat, sp, v, dep, want2, want3, want1 in cases:
+      with self.subTest(lat_active=lat, steering_pressed=sp, v_ego=v, departing=dep):
+        addr, dat, _ = create_lka_lamp_control(packer, 0, lat, sp, v_ego=v, departing=dep)
         self.assertEqual(addr, 0x30A)
         self.assertEqual(len(dat), 8)
-        self.assertEqual(dat[2], want)
+        self.assertEqual(dat[2], want2)
+        self.assertEqual(dat[3], want3)
+        self.assertEqual(dat[1], want1)
         self.assertEqual(dat[7], 0x80)
-        for i in (0, 1, 3, 4, 5, 6):
+        for i in (0, 4, 5, 6):
           self.assertEqual(dat[i], 0, f"byte{i} must stay zero")
 
   def test_mlb_checksum_golden_values(self):

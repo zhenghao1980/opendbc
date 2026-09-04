@@ -928,7 +928,9 @@ BO_ 919 LDW_02: 8 Gateway_D4C7
  SG_ LDW_KD_Fehler : 63|1@1+ (1.0,0.0) [0.0|1] ""  Vector__XXX
 
 BO_ 778 LKA_LAMP: 8 Vector__XXX
+ SG_ LKA_Lamp_Warn : 8|8@1+ (1,0) [0|255] "" Kombi_D4
  SG_ LKA_Lamp_State : 16|8@1+ (1,0) [0|255] "" Kombi_D4
+ SG_ LKA_Lamp_Lanes : 24|8@1+ (1,0) [0|255] "" Kombi_D4
  SG_ LKA_Lamp_Const : 56|8@1+ (1,0) [0|255] "" Kombi_D4
 
 

@@ -60,20 +60,38 @@ def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_p
 # camera's 0x30A byte2 tracked it exactly). byte2: 0x00=off, 0x88=yellow,
 # 0x10=green (lanes-ok bit; stock sets it only above ~60 km/h with clear lanes).
 # No checksum, no counter; byte7 is always 0x80.
+#
+# FIS lane-line graphic (2026-09-05 stock rlog analysis, 62 highway segments):
+# LDW_02 carries no line state on B8 (all display fields constant 0); 0x30A is
+# the only message tracking lane recognition. byte3 bit0 = lanes recognized
+# (stock: set exactly when byte2 green bit is set, 72k frames, no exception);
+# on-car: yellow (byte2=0x88, byte3=0x00) shows hollow lines, so byte3 bit0 is
+# the hollow->solid switch. byte3 bit1 + byte1 bit6 = lane-departure warning
+# (red line): 30 stock episodes, all within 0.01-0.7 m of the line per LDW_02 DLC.
 LKA_LAMP_OFF = 0x00
 LKA_LAMP_GREEN = 0x10
 LKA_LAMP_YELLOW = 0x88
+LKA_LAMP_LANES_RECOGNIZED = 0x01
+LKA_LAMP_LANES_DEPARTURE = 0x02
+LKA_LAMP_WARN_ACTIVE = 0x40
 
 
-def create_lka_lamp_control(packer, bus, lat_active, steering_pressed, v_ego=None):
+def create_lka_lamp_control(packer, bus, lat_active, steering_pressed, v_ego=None, departing=False):
   # Same yellow-wins precedence as create_lka_hud_control: driver override or
   # standstill -> yellow; plain latActive -> green; otherwise off.
   standstill = v_ego is not None and v_ego < LANE_KEEP_STANDSTILL_M_S
   yellow = lat_active and (steering_pressed or standstill)
   green = lat_active and not yellow
   byte2 = LKA_LAMP_YELLOW if yellow else (LKA_LAMP_GREEN if green else LKA_LAMP_OFF)
+  # Departure warning bits only make sense while the system is active (stock
+  # warning episodes all occurred in active states); keep them off otherwise.
+  dep = departing and lat_active
+  byte3 = (LKA_LAMP_LANES_RECOGNIZED if green else 0x00) | (LKA_LAMP_LANES_DEPARTURE if dep else 0x00)
+  byte1 = LKA_LAMP_WARN_ACTIVE if dep else 0x00
   return packer.make_can_msg("LKA_LAMP", bus, {
+    "LKA_Lamp_Warn": byte1,
     "LKA_Lamp_State": byte2,
+    "LKA_Lamp_Lanes": byte3,
     "LKA_Lamp_Const": 0x80,
   })
 
