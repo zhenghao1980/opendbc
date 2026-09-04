@@ -1,5 +1,5 @@
-from opendbc.car.volkswagen.mqbcan import (volkswagen_mqb_meb_checksum, xor_checksum,
-                                           create_lka_hud_control as mqb_create_lka_hud_control)
+from opendbc.car.crc import CRC8H2F
+from opendbc.car.volkswagen.mqbcan import volkswagen_mqb_meb_checksum, xor_checksum
 
 # TODO: Parameterize the hca control type (5 vs 7) and consolidate with MQB (and PQ?)
 def create_steering_control(packer, bus, apply_steer, lkas_enabled, hca_mode=7):
@@ -14,9 +14,44 @@ def create_steering_control(packer, bus, apply_steer, lkas_enabled, hca_mode=7):
   return packer.make_can_msg("HCA_01", bus, values)
 
 
-def create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control, v_ego=None):
-  return mqb_create_lka_hud_control(packer, bus, ldw_stock_values, enabled, steering_pressed, hud_alert, hud_control,
-                                    v_ego=v_ego)
+# v_ego standstill threshold (m/s) for the yellow lane-keep indicator.
+# At ~1.8 km/h (0.5 m/s) the car is effectively stopped (traffic light,
+# stop-and-go creep) while openpilot lateral may still be active; the cluster
+# should show yellow ("engaged but not steering"), not green.
+# Threshold is intentionally above zero so the lamp doesn't bounce green/yellow
+# while creeping.
+LANE_KEEP_STANDSTILL_M_S = 0.5
+
+
+def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_pressed, hud_alert, hud_control,
+                           v_ego=None):
+  # MLB-native version of mqbcan.create_lka_hud_control (kept here so mqbcan.py
+  # stays byte-identical to upstream). Adds v_ego-aware yellow-lamp precedence:
+  # yellow wins over green so the cluster never shows green while the driver
+  # overrides steering or the car is at a standstill with latActive on.
+  # v_ego=None means "not supplied": keep the legacy mapping (no standstill yellow).
+  standstill = v_ego is not None and v_ego < LANE_KEEP_STANDSTILL_M_S
+  yellow = lat_active and (steering_pressed or standstill)
+  green = lat_active and not yellow
+
+  values = {}
+  if len(ldw_stock_values):
+    values = {s: ldw_stock_values[s] for s in [
+      "LDW_SW_Warnung_links",   # Blind spot in warning mode on left side due to lane departure
+      "LDW_SW_Warnung_rechts",  # Blind spot in warning mode on right side due to lane departure
+      "LDW_Seite_DLCTLC",       # Direction of most likely lane departure (left or right)
+      "LDW_DLC",                # Lane departure, distance to line crossing
+      "LDW_TLC",                # Lane departure, time to line crossing
+    ]}
+
+  values.update({
+    "LDW_Status_LED_gelb": 1 if yellow else 0,
+    "LDW_Status_LED_gruen": 1 if green else 0,
+    "LDW_Lernmodus_links": 3 if hud_control.leftLaneDepart else 1 + hud_control.leftLaneVisible,
+    "LDW_Lernmodus_rechts": 3 if hud_control.rightLaneDepart else 1 + hud_control.rightLaneVisible,
+    "LDW_Texte": hud_alert,
+  })
+  return packer.make_can_msg("LDW_02", bus, values)
 
 
 def create_acc_buttons_control(packer, bus, gra_stock_values, cancel=False, resume=False):
@@ -94,11 +129,31 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
   return packer.make_can_msg("ACC_02", bus, values)
 
 
+# MLB-only CRC8H2F initial values, keyed by message address, one per counter
+# value. Kept here (not in mqbcan's VOLKSWAGEN_MQB_MEB_CONSTANTS) so mqbcan.py
+# stays byte-identical to upstream.
+MLB_CRC8_CONSTANTS: dict[int, list[int]] = {
+  0x11D: [0x1C] * 16,  # LH_EPS_02
+  0x11E: [0xD2] * 16,  # ESP_08
+  0x32A: [0x29] * 16,  # LH_EPS_01
+}
+
+
 def volkswagen_mlb_checksum(address: int, sig, d: bytearray) -> int:
 
-  # LH_EPS_03, ACC_10, LH_EPS_02, ESP_08, HCA_01, LH_EPS_01
-  if address in {0x9F, 0x117, 0x11D, 0x11E, 0x126, 0x32A}:
+  # LH_EPS_03, ACC_10, HCA_01 use the shared MQB/MEB constant table
+  if address in {0x9F, 0x117, 0x126}:
     return volkswagen_mqb_meb_checksum(address, sig, d)
+
+  # LH_EPS_02, ESP_08, LH_EPS_01: same CRC8H2F algorithm, MLB-local constants
+  if address in MLB_CRC8_CONSTANTS:
+    crc = 0xFF
+    for i in range(1, len(d)):
+      crc ^= d[i]
+      crc = CRC8H2F[crc]
+    crc ^= MLB_CRC8_CONSTANTS[address][d[1] & 0x0F]
+    crc = CRC8H2F[crc]
+    return crc ^ 0xFF
 
   # XOR checksum is seeded with the CAN address high byte XOR low byte.
   seed = (address >> 8) ^ (address & 0xFF)

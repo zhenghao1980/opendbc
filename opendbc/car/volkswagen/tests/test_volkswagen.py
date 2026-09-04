@@ -7,8 +7,9 @@ from opendbc.car.structs import CarParams
 from opendbc.can.dbc import DBC
 from opendbc.can.packer import CANPacker
 from opendbc.car.volkswagen.carcontroller import HCAMitigation
-from opendbc.car.volkswagen.mlbcan import create_lka_hud_control as mlb_create_lka_hud_control
-from opendbc.car.volkswagen.mqbcan import LANE_KEEP_STANDSTILL_M_S, create_lka_hud_control as mqb_create_lka_hud_control
+from opendbc.car.volkswagen.mlbcan import LANE_KEEP_STANDSTILL_M_S, create_lka_hud_control as mlb_create_lka_hud_control, \
+                                          volkswagen_mlb_checksum
+from opendbc.car.volkswagen.mqbcan import create_lka_hud_control as mqb_create_lka_hud_control
 from opendbc.car.volkswagen.values import CAR, CHECK_FUZZY_ECUS, CarControllerParams as CCP, FW_QUERY_CONFIG, WMI
 from opendbc.car.volkswagen.fingerprints import FW_VERSIONS
 
@@ -120,20 +121,29 @@ class TestVolkswagenLkaHudControl(unittest.TestCase):
       (True,  False, LANE_KEEP_STANDSTILL_M_S - 0.05, 0, 1),  # just under -> yellow
       (True,  False, LANE_KEEP_STANDSTILL_M_S + 0.05, 1, 0),  # just over -> green
     ]
-    for dbc_name, impl in (("vw_mqb", mqb_create_lka_hud_control), ("vw_mlb", mlb_create_lka_hud_control)):
-      for lat_act, sp, v, eg, ey in cases:
-        with self.subTest(dbc=dbc_name, lat_active=lat_act, steering_pressed=sp, v_ego=v):
-          _, get = self._pack(dbc_name, impl, lat_act, sp, v)
-          self.assertEqual((get("LDW_Status_LED_gruen"), get("LDW_Status_LED_gelb")), (eg, ey))
+    for lat_act, sp, v, eg, ey in cases:
+      with self.subTest(lat_active=lat_act, steering_pressed=sp, v_ego=v):
+        _, get = self._pack("vw_mlb", mlb_create_lka_hud_control, lat_act, sp, v)
+        self.assertEqual((get("LDW_Status_LED_gruen"), get("LDW_Status_LED_gelb")), (eg, ey))
 
   def test_default_v_ego_keeps_legacy_behavior(self):
-    """Callers that don't pass v_ego get the pre-change mapping (green for plain lat_active)."""
+    """MLB callers that don't pass v_ego get the pre-change mapping (green for plain lat_active);
+    MQB keeps the upstream 7-arg signature (no v_ego at all)."""
     for dbc_name, impl in (("vw_mqb", mqb_create_lka_hud_control), ("vw_mlb", mlb_create_lka_hud_control)):
       packer = CANPacker(dbc_name)
       addr, dat, _ = impl(packer, 0, {}, True, False, 0, self._Hud())
       sig = DBC(dbc_name).addr_to_msg[addr].sigs["LDW_Status_LED_gruen"]
       raw = int.from_bytes(dat, "little") >> sig.lsb & ((1 << sig.size) - 1)
-      self.assertEqual(raw, 1, f"{dbc_name}: no v_ego should still produce green")
+      self.assertEqual(raw, 1, f"{dbc_name}: legacy call should still produce green")
+
+  def test_mlb_checksum_golden_values(self):
+    """Guards the MLB-local CRC8 constant table (moved out of mqbcan) and XOR seeding."""
+    class _Sig:
+      start_bit = 0
+    fixed = bytearray([0x00, 0xA5, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
+    golden = {0x9F: 102, 0x117: 97, 0x11D: 104, 0x11E: 216, 0x126: 143, 0x32A: 38, 0x397: 70, 0x100: 121, 0x101: 120}
+    for addr, want in golden.items():
+      self.assertEqual(volkswagen_mlb_checksum(addr, _Sig(), fixed), want, f"{hex(addr)} checksum changed")
 
   def test_stock_values_passthrough(self):
     """Seite/DLC/TLC/SW_Warnung must pass through from the stock camera frame."""
@@ -141,7 +151,15 @@ class TestVolkswagenLkaHudControl(unittest.TestCase):
              "LDW_Seite_DLCTLC": 1, "LDW_DLC": 0.5, "LDW_TLC": 1.2}
     for dbc_name, impl in (("vw_mqb", mqb_create_lka_hud_control), ("vw_mlb", mlb_create_lka_hud_control)):
       with self.subTest(dbc=dbc_name):
-        _, get = self._pack(dbc_name, impl, True, False, 10.0, stock=stock)
+        packer = CANPacker(dbc_name)
+        kwargs = {"v_ego": 10.0} if dbc_name == "vw_mlb" else {}  # MQB keeps the upstream 7-arg signature
+        addr, dat, _ = impl(packer, 0, stock, True, False, 0, self._Hud(), **kwargs)
+        msg = DBC(dbc_name).addr_to_msg[addr]
+
+        def get(name):
+          sig = msg.sigs[name]
+          raw = int.from_bytes(dat, "little") >> sig.lsb & ((1 << sig.size) - 1)
+          return raw * sig.factor + sig.offset
         self.assertEqual(get("LDW_SW_Warnung_links"), 1)
         self.assertEqual(get("LDW_Seite_DLCTLC"), 1)
         self.assertAlmostEqual(get("LDW_DLC"), 0.5, places=2)

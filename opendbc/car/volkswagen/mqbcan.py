@@ -31,24 +31,7 @@ def create_eps_update(packer, bus, eps_stock_values, ea_simulated_torque):
   return packer.make_can_msg("LH_EPS_03", bus, values)
 
 
-# v_ego standstill threshold (m/s) for the yellow lane-keep indicator.
-# At ~1.8 km/h (0.5 m/s) the car is effectively stopped (traffic light,
-# stop-and-go creep) while openpilot lateral may still be active; the cluster
-# should show yellow ("engaged but not steering"), not green.
-# Threshold is intentionally above zero so the lamp doesn't bounce green/yellow
-# while creeping.
-LANE_KEEP_STANDSTILL_M_S = 0.5
-
-
-def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_pressed, hud_alert, hud_control,
-                           v_ego=None):
-  # v_ego=None means "not supplied": legacy callers keep previous behavior
-  # (no standstill yellow). Callers that want yellow-on-standstill must pass
-  # v_ego explicitly.
-  standstill = v_ego is not None and v_ego < LANE_KEEP_STANDSTILL_M_S
-  yellow = lat_active and (steering_pressed or standstill)
-  green = lat_active and not yellow
-
+def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_pressed, hud_alert, hud_control):
   values = {}
   if len(ldw_stock_values):
     values = {s: ldw_stock_values[s] for s in [
@@ -60,8 +43,8 @@ def create_lka_hud_control(packer, bus, ldw_stock_values, lat_active, steering_p
     ]}
 
   values.update({
-    "LDW_Status_LED_gelb": 1 if yellow else 0,
-    "LDW_Status_LED_gruen": 1 if green else 0,
+    "LDW_Status_LED_gelb": 1 if lat_active and steering_pressed else 0,
+    "LDW_Status_LED_gruen": 1 if lat_active and not steering_pressed else 0,
     "LDW_Lernmodus_links": 3 if hud_control.leftLaneDepart else 1 + hud_control.leftLaneVisible,
     "LDW_Lernmodus_rechts": 3 if hud_control.rightLaneDepart else 1 + hud_control.rightLaneVisible,
     "LDW_Texte": hud_alert,
@@ -145,11 +128,11 @@ def create_acc_accel_control(packer, bus, acc_type, acc_enabled, accel, acc_cont
   return commands
 
 
-def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text):
+def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, distance):
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
     "ACC_Wunschgeschw_02": set_speed if set_speed < 250 else 327.36,
-    "ACC_Gesetzte_Zeitluecke": hud_control.leadDistanceBars + 2,
+    "ACC_Gesetzte_Zeitluecke": distance + 2,
     "ACC_Display_Prio": 3,
     "ACC_Abstandsindex": lead_distance,
   }
@@ -195,7 +178,7 @@ def volkswagen_mqb_meb_checksum(address: int, sig, d: bytearray) -> int:
     crc ^= d[i]
     crc = CRC8H2F[crc]
   counter = d[1] & 0x0F
-  const = VOLKSWAGEN_MQB_MEB_MLB_CONSTANTS.get(address)
+  const = VOLKSWAGEN_MQB_MEB_CONSTANTS.get(address)
   if const:
     crc ^= const[counter]
     crc = CRC8H2F[crc]
@@ -234,7 +217,7 @@ def xor_checksum(address: int, sig, d: bytearray, initial_value: int = 0) -> int
   return checksum
 
 
-VOLKSWAGEN_MQB_MEB_MLB_CONSTANTS: dict[int, list[int]] = {
+VOLKSWAGEN_MQB_MEB_CONSTANTS: dict[int, list[int]] = {
     0x40:  [0x40] * 16,  # Airbag_01
     0x86:  [0x86] * 16,  # LWI_01
     0x9F:  [0xF5] * 16,  # LH_EPS_03
@@ -254,8 +237,6 @@ VOLKSWAGEN_MQB_MEB_MLB_CONSTANTS: dict[int, list[int]] = {
             0x1F, 0x6C, 0x4F, 0xF6, 0x20, 0x2B, 0x43, 0xDD],  # Motor_51
     0x116: [0xAC] * 16,  # ESP_10
     0x117: [0x16] * 16,  # ACC_10
-    0x11D: [0x1C] * 16,  # LH_EPS_02 (MLB)
-    0x11E: [0xD2] * 16,  # ESP_08 (MLB)
     0x120: [0xC4, 0xE2, 0x4F, 0xE4, 0xF8, 0x2F, 0x56, 0x81,
             0x9F, 0xE5, 0x83, 0x44, 0x05, 0x3F, 0x97, 0xDF],  # TSK_06
     0x121: [0xE9, 0x65, 0xAE, 0x6B, 0x7B, 0x35, 0xE5, 0x5F,
@@ -292,7 +273,6 @@ VOLKSWAGEN_MQB_MEB_MLB_CONSTANTS: dict[int, list[int]] = {
     0x30C: [0x0F] * 16,  # ACC_02
     0x30F: [0x0C] * 16,  # SWA_01
     0x324: [0x27] * 16,  # ACC_04
-    0x32A: [0x29] * 16,  # LH_EPS_01 (MLB)
     0x3BE: [0x1F, 0x28, 0xC6, 0x85, 0xE6, 0xF8, 0xB0, 0x19,
             0x5B, 0x64, 0x35, 0x21, 0xE4, 0xF7, 0x9C, 0x24],  # Motor_14
     0x3C0: [0xC3] * 16,  # Klemmen_Status_01
