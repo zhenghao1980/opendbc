@@ -94,9 +94,12 @@ static void volkswagen_mlb_rx_hook(const CANPacket_t *msg) {
         volkswagen_set_button_prev = set_button;
         volkswagen_resume_button_prev = resume_button;
       }
-      // Always exit controls on rising edge of Cancel
+      // Exit controls on rising edge of Cancel, unless the separate lat/long mode
+      // alt-experience is active: then cancel only drops longitudinal (handled in
+      // selfdrived) and lateral must keep controls_allowed, otherwise OP would send
+      // active HCA_01 frames that panda blocks, gapping the EPS counter.
       // Signal: LS_01.LS_Abbrechen
-      if (GET_BIT(msg, 13U)) {
+      if (GET_BIT(msg, 13U) && !(alternative_experience & ALT_EXP_DISABLE_DISENGAGE_ON_CANCEL)) {
         controls_allowed = false;
       }
     }

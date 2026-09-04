@@ -325,6 +325,11 @@ extern CurvatureSteeringState curvature_state;
 // control mode where brake only cancels longitudinal and lateral remains active.
 #define ALT_EXP_DISABLE_DISENGAGE_ON_BRAKE 32
 
+// Cancel button press is a stock disengage. With this flag the cancel button does not
+// clear controls_allowed. Used by the separate lat/long control mode where cancel only
+// drops longitudinal and lateral stays under exclusive ALA button control.
+#define ALT_EXP_DISABLE_DISENGAGE_ON_CANCEL 64
+
 extern int alternative_experience;
 
 // time since safety mode has been changed
