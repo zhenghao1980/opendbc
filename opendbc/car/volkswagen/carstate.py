@@ -353,6 +353,10 @@ class CarState(CarStateBase):
     ret.brakePressed = brake_pedal_pressed or brake_pressure_detected
     ret.parkingBrake = bool(pt_cp.vl["Kombi_01"]["KBI_Handbremse"])
     ret.espDisabled = pt_cp.vl["ESP_01"]["ESP_Tastung_passiv"] != 0
+    # B8 hold-assist chain verified on B8PA route data: ESP_05.ESP_Autohold_aktiv is 1
+    # while the ESP holds the car hydraulically at standstill (green P). EPB takeover
+    # (red P) only happens on door/seatbelt/engine-off events, not on a timer.
+    self.esp_hold_confirmation = bool(pt_cp.vl["ESP_05"]["ESP_Autohold_aktiv"])
 
     ret.leftBlinker = bool(pt_cp.vl["BCM"]["BLINKER_LEFT"])
     ret.rightBlinker = bool(pt_cp.vl["BCM"]["BLINKER_RIGHT"])
