@@ -46,6 +46,7 @@ class CarInterface(CarInterfaceBase):
       ret.enableBsm = 0x30F in fingerprint[0]  # SWA_01
       ret.networkLocation = NetworkLocation.gateway
       ret.dashcamOnly = is_release  # Release support needs HCA timeout fix, safety validation, revised J533 harness
+      ret.longitudinalActuatorDelay = 0.2  # B8PA: ESP 8plus hydraulic brake response (no online estimator exists for longitudinal)
 
     elif ret.flags & VolkswagenFlags.MEB:
       # Set global MEB parameters
@@ -106,7 +107,7 @@ class CarInterface(CarInterfaceBase):
 
     ret.steerLimitTimer = 0.4
     if ret.flags & VolkswagenFlags.PQ or ret.flags & VolkswagenFlags.MLB:
-      ret.steerActuatorDelay = 0.2
+      ret.steerActuatorDelay = 0.3  # B8PA lagd 在线估计 0.4s 但 validBlocks=0 (unestimated)，折中选 0.3，介于 oscarmcnulty 占位 0.2 与实测 0.4 之间
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
     elif ret.flags & VolkswagenFlags.MEB:
       ret.steerActuatorDelay = 0.3

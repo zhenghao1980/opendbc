@@ -68,7 +68,7 @@ class CarControllerParams:
 
   ACCEL_MAX = 2.0                          # 2.0 m/s^2 max acceleration
   ACCEL_MIN = -3.5                         # 3.5 m/s^2 max deceleration
-  MLB_ACCEL_MIN = -2.95                    # -3.0 trips the MLB ACC ECU fault (2014 Audi Q5 3.0T)
+  MLB_ACCEL_MIN = -3.5                     # m/s^2; aligns with MQB. B8PA ACC3 ECU is 8K0 907 561 B (not 8R0 907 56x as in oscarmcnulty comment), and SSP 620 lists OEM app-layer cap at -4 m/s^2
 
   def __init__(self, CP):
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
