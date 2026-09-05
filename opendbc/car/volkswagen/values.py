@@ -526,10 +526,13 @@ class CAR(Platforms):
   # Audi A4/A4L B8PA (8K) facelift only — pre-facelift B8 lacks EPS
   AUDI_A4_B8PA = VolkswagenMLBPlatformConfig(
     [VWCarDocs("Audi A4/A4L (B8.5) 2013-16")],
-    # minEnableSpeed left at CarSpecs default (-1): B8 ESP 8plus can hold the car
-    # hydraulically at standstill (verified: ESP_05.ESP_Autohold_aktiv), so stop&go
-    # is allowed below the stock ACC3 15 kph disengagement threshold.
-    VolkswagenCarSpecs(mass=1750, wheelbase=2.869),
+    # minEnableSpeed=15kph is a hard car-side limit, verified on road (route
+    # 0000006c): the TSK coordinator in the engine ECU (J623) exits cruise at
+    # ~14 kph and the ESP stops executing decel requests with it; engaging at
+    # standstill faults TSK (sticky until ignition cycle). OP must disengage
+    # longitudinal at 15 first so there is no no-braking gap.
+    VolkswagenCarSpecs(mass=1750, wheelbase=2.869,
+                       minEnableSpeed=15 * CV.KPH_TO_MS),
     chassis_codes={"8K"},
     # WAU = 德国产(进口A4/A5); LFV = 一汽奥迪长春产 A4L
     wmis={WMI.AUDI_GERMANY_CAR, WMI.VOLKSWAGEN_CHINA_FAW},
