@@ -107,7 +107,7 @@ class CarInterface(CarInterfaceBase):
 
     ret.steerLimitTimer = 0.4
     if ret.flags & VolkswagenFlags.PQ or ret.flags & VolkswagenFlags.MLB:
-      ret.steerActuatorDelay = 0.3  # B8PA lagd 在线估计 0.4s 但 validBlocks=0 (unestimated)，折中选 0.3，介于 oscarmcnulty 占位 0.2 与实测 0.4 之间
+      ret.steerActuatorDelay = 0.2  # B8PA revert: 回到 oscarmcnulty 占位 0.2（lagd 在线估计 0.4s 但 validBlocks=0 unestimated，无法用）
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
     elif ret.flags & VolkswagenFlags.MEB:
       ret.steerActuatorDelay = 0.3

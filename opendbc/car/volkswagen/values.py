@@ -68,7 +68,7 @@ class CarControllerParams:
 
   ACCEL_MAX = 2.0                          # 2.0 m/s^2 max acceleration
   ACCEL_MIN = -3.5                         # 3.5 m/s^2 max deceleration
-  MLB_ACCEL_MIN = -3.5                     # m/s^2; aligns with MQB. B8PA ACC3 ECU is 8K0 907 561 B (not 8R0 907 56x as in oscarmcnulty comment), and SSP 620 lists OEM app-layer cap at -4 m/s^2
+  MLB_ACCEL_MIN = -2.95                    # m/s^2; revert B8PA -3.5 (rlog 6c-17 实际只撞到 -3.25，-2.95 钳位已足够；原 -3.0 trips 注释保留保守余量)
 
   def __init__(self, CP):
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
