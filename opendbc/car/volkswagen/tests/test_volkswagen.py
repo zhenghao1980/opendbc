@@ -168,6 +168,21 @@ class TestVolkswagenLkaHudControl(unittest.TestCase):
         for i in (0, 4, 5, 6):
           self.assertEqual(dat[i], 0, f"byte{i} must stay zero")
 
+    # lat_enabled (display state) keeps the lamp alive when latActive is gated off,
+    # matching the stock camera: standstill with lateral engaged shows yellow, not off
+    enabled_cases = [
+      # (lat_active, lat_enabled, v_ego, want_byte2)
+      (False, True,  0.0,  LKA_LAMP_YELLOW),  # standstill, lateral engaged -> yellow (stock behavior)
+      (False, True,  10.0, LKA_LAMP_YELLOW),  # enabled but not steering (fault/blocked) -> yellow
+      (False, False, 0.0,  LKA_LAMP_OFF),     # standstill, lateral off -> off
+      (True,  True,  0.0,  LKA_LAMP_YELLOW),  # standstill still wins over green
+      (True,  True,  10.0, LKA_LAMP_GREEN),   # normal driving unchanged
+    ]
+    for lat, en, v, want2 in enabled_cases:
+      with self.subTest(lat_active=lat, lat_enabled=en, v_ego=v):
+        _, dat, _ = create_lka_lamp_control(packer, 0, lat, False, v_ego=v, lat_enabled=en)
+        self.assertEqual(dat[2], want2)
+
   def test_mlb_checksum_golden_values(self):
     """Guards the MLB-local CRC8 constant table (moved out of mqbcan) and XOR seeding."""
     class _Sig:

@@ -76,11 +76,16 @@ LKA_LAMP_LANES_DEPARTURE = 0x02
 LKA_LAMP_WARN_ACTIVE = 0x40
 
 
-def create_lka_lamp_control(packer, bus, lat_active, steering_pressed, v_ego=None, departing=False):
-  # Same yellow-wins precedence as create_lka_hud_control: driver override or
-  # standstill -> yellow; plain latActive -> green; otherwise off.
+def create_lka_lamp_control(packer, bus, lat_active, steering_pressed, v_ego=None, departing=False, lat_enabled=False):
+  # Yellow-wins precedence: driver override, standstill, or "enabled but not
+  # actively steering" -> yellow; plain latActive -> green; otherwise off.
+  # lat_enabled keeps the lamp alive at standstill: upstream controlsd gates
+  # latActive off at standstill (steerAtStandstill=False on MLB), but the stock
+  # camera keeps the yellow lamp on there, so the display state must follow the
+  # enabled/wanted state, not the steering-active state.
   standstill = v_ego is not None and v_ego < LANE_KEEP_STANDSTILL_M_S
-  yellow = lat_active and (steering_pressed or standstill)
+  lateral_on = lat_active or lat_enabled
+  yellow = lateral_on and (steering_pressed or standstill or not lat_active)
   green = lat_active and not yellow
   byte2 = LKA_LAMP_YELLOW if yellow else (LKA_LAMP_GREEN if green else LKA_LAMP_OFF)
   # Departure warning bits only make sense while the system is active (stock
@@ -151,9 +156,31 @@ def acc_hud_status_value(main_switch_on, acc_faulted, long_active):
   return acc_control_value(main_switch_on, acc_faulted, long_active)
 
 
+# B8 Kombi distance-bar display index (ACC_Abstandsindex) is a non-linear display index, not meters.
+# Calibrated from 2478 stock radar<->vision lead pairs on B8PA (archived in acc_fusion/pairs_*.jsonl):
+# (lead distance m, median abidx). Monotonic non-increasing; dense 17-60m region is high quality,
+# far region (>70m) is noisy and saturates around 120.
+_ABSTANDSINDEX_LUT = (
+  (17.0, 668), (20.0, 616), (25.0, 505), (30.0, 472), (35.0, 442), (40.0, 433),
+  (45.0, 417), (50.0, 400), (60.0, 388), (70.0, 267), (75.0, 243), (85.0, 145),
+  (95.0, 120), (105.0, 120),
+)
+
+
+def _abstandsindex(lead_distance_m: float) -> int:
+  """Map lead distance in meters to the B8 cluster's non-linear ACC_Abstandsindex display index."""
+  if lead_distance_m <= _ABSTANDSINDEX_LUT[0][0]:
+    return _ABSTANDSINDEX_LUT[0][1]
+  for (d0, a0), (d1, a1) in zip(_ABSTANDSINDEX_LUT, _ABSTANDSINDEX_LUT[1:]):
+    if lead_distance_m <= d1:
+      return int(round(a0 + (a1 - a0) * (lead_distance_m - d0) / (d1 - d0)))
+  return _ABSTANDSINDEX_LUT[-1][1]
+
+
 def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text):
 
   acc_active = acc_hud_status in (3, 4)
+  has_lead = acc_active and hud_control.leadVisible
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
     "ACC_Wunschgeschw_02": set_speed if set_speed < 250 else 327.04,
@@ -161,10 +188,12 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
     "ACC_Anzeige_Zeitluecke": 1 if acc_active else 0,
     "ACC_Gesetzte_Zeitluecke": hud_control.leadDistanceBars, # TODO: Update openpilot charisma using stock rocker switch
     "ACC_Tachokranz": 1 if acc_active else 0,
-    "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if acc_active and hud_control.leadVisible else 0),
+    "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if has_lead else 0),
     "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if acc_active else 0),
     "ACC_Akustik": 1 if hud_control.audibleAlert == 5 else 0, # Audible alert on OP warningImmediate
-    "ACC_Abstandsindex": 1023 if acc_active else 1022,
+    # Stock J428 only draws the lead-car glyph when Abstandsindex carries a real distance index
+    # (1023 = "road with green/red area" special display, 1022 = "grey road" special display)
+    "ACC_Abstandsindex": _abstandsindex(lead_distance) if has_lead and lead_distance > 1.0 else (1023 if acc_active else 1022),
     "ACC_Texte_Primaeranz": mlb_hud_text,
   }
 

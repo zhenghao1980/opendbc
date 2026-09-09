@@ -223,7 +223,8 @@ class CarController(CarControllerBase):
         # byte3/byte1 carry the FIS lane-line graphic (solid lines / departure warning)
         can_sends.append(self.CCS.create_lka_lamp_control(self.packer_pt, self.CAN.pt, CC.latActive,
                                                           CS.out.steeringPressed, v_ego=CS.out.vEgo,
-                                                          departing=hud_control.leftLaneDepart or hud_control.rightLaneDepart))
+                                                          departing=hud_control.leftLaneDepart or hud_control.rightLaneDepart,
+                                                          lat_enabled=hud_control.latEnabled))
       else:
         can_sends.append(self.CCS.create_lka_hud_control(self.packer_pt, self.CAN.pt, CS.ldw_stock_values, CC.latActive,
                                                          CS.out.steeringPressed, hud_alert, hud_control))
@@ -266,7 +267,7 @@ class CarController(CarControllerBase):
 
         if self.CP.flags & VolkswagenFlags.MLB:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
-                                                           lead_distance, hud_control, self.mlb_hud_text))
+                                                           hud_control.leadDistance, hud_control, self.mlb_hud_text))
         else:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            lead_distance, hud_control.leadDistanceBars))
