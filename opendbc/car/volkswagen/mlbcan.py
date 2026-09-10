@@ -184,10 +184,14 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
     "ACC_Wunschgeschw_02": set_speed if set_speed < 250 else 327.04,
-    "ACC_Display_Prio": 0,
-    "ACC_Anzeige_Zeitluecke": 1 if acc_active else 0,
+    # Stock J428 constants in all 5000 observed frames (active/passive/lead/no-lead):
+    # Display_Prio=3, Typ_Tachokranz=1, Anzeige_Zeitluecke=0. OP must match these —
+    # the Kombi drops the lead-car glyph when they deviate (distance bar still renders).
+    "ACC_Display_Prio": 3,
+    "ACC_Anzeige_Zeitluecke": 0,
     "ACC_Gesetzte_Zeitluecke": hud_control.leadDistanceBars, # TODO: Update openpilot charisma using stock rocker switch
     "ACC_Tachokranz": 1 if acc_active else 0,
+    "ACC_Typ_Tachokranz": 1,
     "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if has_lead else 0),
     "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if acc_active else 0),
     "ACC_Akustik": 1 if hud_control.audibleAlert == 5 else 0, # Audible alert on OP warningImmediate

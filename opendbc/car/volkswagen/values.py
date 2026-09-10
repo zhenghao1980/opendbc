@@ -157,7 +157,8 @@ class CarControllerParams:
           Button(structs.CarState.ButtonEvent.Type.accelCruise, "LS_01", "LS_Tip_Hoch", [1]),
           Button(structs.CarState.ButtonEvent.Type.decelCruise, "LS_01", "LS_Tip_Runter", [1]),
           Button(structs.CarState.ButtonEvent.Type.cancel, "LS_01", "LS_Abbrechen", [1]),
-          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "LS_01", "LS_Verstellung_Zeitluecke", [1]),
+          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "LS_01", "LS_Verstellung_Zeitluecke", [1]),  # rocker left: Dist -1 (closer)
+          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruiseUp, "LS_01", "LS_Verstellung_Zeitluecke", [2]),  # rocker right: Dist +1 (farther)
           Button(structs.CarState.ButtonEvent.Type.lkas, "BCM", "ALA_TASTE", [1]),
         ]
 
