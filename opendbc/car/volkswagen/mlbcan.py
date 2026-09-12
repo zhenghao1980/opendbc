@@ -122,9 +122,14 @@ def acc_control_value(main_switch_on, acc_faulted, long_active, gas_override=Fal
   if acc_faulted:
     acc_control = 6
   elif long_active:
-    acc_control = 3
-  elif gas_override:
-    acc_control = 4
+    # MLB: stock 3 = actively regulating. When the driver presses the gas, OP keeps
+    # longitudinal authority but stops accel, so the stock "background override"
+    # semantic (status 4) is more accurate than 3 — keeps the cluster HUD lead car
+    # lit without a hard 3->2 transition that the J428 ACC state machine treats
+    # as ACC exited. gas_override is only honored when long_active: without OP
+    # longitudinal control, gas press must NOT promote a stock "off" (status 2/0)
+    # state into 4, which would falsely light the cluster ACC lamp.
+    acc_control = 4 if gas_override else 3
   elif main_switch_on:
     acc_control = 2
   else:
