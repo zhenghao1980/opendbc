@@ -188,36 +188,34 @@ def _abstandsindex(lead_distance_m: float) -> int:
   return _ABSTANDSINDEX_LUT[-1][1]
 
 
-def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text, prim_pulse=True):
+def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text, announcing=False):
 
   acc_active = acc_hud_status in (3, 4)
   has_lead = acc_active and hud_control.leadVisible
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
-    # Stock J428 invalidates Wunschgeschw (327.04) whenever ACC is not active and
-    # restores the stored speed at the moment of activation (B8PA rlog route
-    # 0000009c: standby/off frames all 327.04, 35.84 appears exactly at the
-    # activation frame). The Kombi redraws the ACC lead-car/road graphic on this
-    # invalid->valid transition; OP previously kept the last set speed in
-    # standby, so cancel/resume produced no transition and no redraw.
-    "ACC_Wunschgeschw_02": (set_speed if set_speed < 250 else 327.04) if acc_active else 327.04,
-    # Stock J428 constants, REVISED per B8PA rlog evidence (route 0000009c, bus2):
-    # standby/off (status 2/7): Display_Prio=3, Anzeige_Zeitluecke=0 — but ACTIVE
-    # (status 3) switches to Display_Prio=1, Anzeige_Zeitluecke=1 (Anzeige_Zeitluecke
-    # is the time-gap/distance-cursor display enable). OP previously sent 3/0 always,
-    # which matches standby but deviates in the active state — suspected cause of the
-    # cluster dropping the lead-car/road graphic after cancel/resume cycles.
-    "ACC_Display_Prio": 1 if acc_active else 3,
-    "ACC_Anzeige_Zeitluecke": 1 if acc_active else 0,
+    # Stock J428 keeps the stored set speed VALID in standby after a cancel
+    # (B8PA rlog route 0000000a: standby frames hold w=69.76); it is only
+    # invalid before the first set. OP matches this by always sending it.
+    "ACC_Wunschgeschw_02": set_speed if set_speed < 250 else 327.04,
+    # Stock J428 display-priority state machine (B8PA rlog route 0000000a,
+    # full cancel->resume ground truth):
+    #   steady/standby:  Display_Prio=3, Anzeige_Zeitluecke=0
+    #   announcement (~2s after activation, speed set, or gap change):
+    #                    Display_Prio=2, Texte_Primaeranz=announcement text
+    # The Kombi (re)draws the ACC lead-car/road graphic when it receives an
+    # announcement. OP previously announced only on set-speed CHANGES, so the
+    # graphic appeared at first activation (327->valid speed change) but a
+    # resume with unchanged speed announced nothing and was never redrawn.
+    "ACC_Display_Prio": 2 if (acc_active and announcing) else 3,
+    "ACC_Anzeige_Zeitluecke": 0,
     "ACC_Gesetzte_Zeitluecke": hud_control.leadDistanceBars, # TODO: Update openpilot charisma using stock rocker switch
     "ACC_Tachokranz": 1 if acc_active else 0,
     "ACC_Typ_Tachokranz": 1,
     "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if has_lead else 0),
-    # Stock J428 pulses Status_Prim_Anz=1 for only ~1.1s after ACC activation
-    # (B8PA rlog route 0000009c: prim 0->1 at +0.19s, back to 0 at +1.32s), then
-    # holds 0 for the rest of the active period — it is a "new set speed"
-    # highlight, not a steady-state flag. OP previously held 1 the whole time.
-    "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if (acc_active and prim_pulse) else 0),
+    # Stock holds Status_Prim_Anz=1 essentially the whole active period
+    # (route 0000000a steady state); brief 0 blips exist but 1 is the norm.
+    "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if acc_active else 0),
     "ACC_Akustik": 1 if hud_control.audibleAlert == 5 else 0, # Audible alert on OP warningImmediate
     # Stock J428 only draws the lead-car glyph when Abstandsindex carries a real distance index
     # (1023 = "road with green/red area" special display, 1022 = "grey road" special display)

@@ -104,7 +104,6 @@ class CarController(CarControllerBase):
     self.last_lead_distance_bars = 0
     self.mlb_hud_text = 0
     self.texte_timer = 0
-    self.prim_timer = 0
     self.last_long_active = False
 
   def update(self, CC, CS, now_nanos):
@@ -261,6 +260,14 @@ class CarController(CarControllerBase):
 
         # MLB:Logic for hud text, bottom acc text display
         if self.CP.flags & VolkswagenFlags.MLB:
+          # Stock J428 sends a ~2s announcement (Display_Prio=2 + Texte) on EVERY
+          # ACC activation, not just on set-speed changes (route 0000000a resume
+          # at t=369.05). Without this the Kombi never redraws the lead-car
+          # graphic after a cancel/resume cycle.
+          if CC.longActive and not self.last_long_active:
+            self.texte_timer = self.frame + int(2.0 / DT_CTRL)
+            self.mlb_hud_text = 21
+          self.last_long_active = CC.longActive
           if set_speed != self.last_set_speed:
             self.texte_timer = self.frame + int(2.0 / DT_CTRL)
             self.mlb_hud_text = 21
@@ -270,21 +277,12 @@ class CarController(CarControllerBase):
             self.mlb_hud_text = {1: 2, 2: 3, 3: 4, 4: 5}.get(hud_control.leadDistanceBars, 0)
             self.last_lead_distance_bars = hud_control.leadDistanceBars
           elif self.frame > self.texte_timer:
-            # Stock J428 keeps the current time-gap setting as the PERMANENT primary
-            # text while ACC is active (B8PA rlog route 0000009c: texte=3 constant for
-            # bars=2, matching the {1:2,2:3,3:4,4:5} mapping). OP previously sent 0
-            # here; the Kombi drops the lead-car/road graphic without a persistent
-            # primary text and does not redraw it after a cancel/resume cycle.
-            self.mlb_hud_text = {1: 2, 2: 3, 3: 4, 4: 5}.get(hud_control.leadDistanceBars, 0) if CC.longActive else 0
+            self.mlb_hud_text = 0
 
         if self.CP.flags & VolkswagenFlags.MLB:
-          # Stock J428 pulses Status_Prim_Anz for ~1.1s on ACC activation only
-          if CC.longActive and not self.last_long_active:
-            self.prim_timer = self.frame + int(1.3 / DT_CTRL)
-          self.last_long_active = CC.longActive
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            hud_control.leadDistance, hud_control, self.mlb_hud_text,
-                                                           prim_pulse=self.frame <= self.prim_timer))
+                                                           announcing=CC.longActive and self.frame <= self.texte_timer))
         else:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            lead_distance, hud_control.leadDistanceBars))
