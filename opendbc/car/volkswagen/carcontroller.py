@@ -200,6 +200,15 @@ class CarController(CarControllerBase):
         else:
           stopping = actuators.longControlState == LongCtrlState.stopping
           acc_control = self.CCS.acc_control_value(CS.out.cruiseState.available, CS.out.accFaulted, CC.longActive)
+          if self.CP.flags & VolkswagenFlags.MLB and not CS.out.accFaulted:
+            # Stock J428 keeps ACC_Status_ACC=4 for the WHOLE gas override (B8PA rlog
+            # route 0000000f t=872.3-878), matching ACC_02 Status_Anzeige=4. Sending
+            # 2 (standby) here while ACC_02 says 4 is inconsistent, and the Kombi drops
+            # the ACC display ~2s into the override. accel/limits stay gated by
+            # CC.longActive below — only the status value reflects the override.
+            acc_long_active = CC.longActive or (CC.enabled and CS.out.gasPressed)
+            acc_control = 4 if (acc_long_active and CS.out.gasPressed) else \
+                          self.CCS.acc_control_value(CS.out.cruiseState.available, CS.out.accFaulted, acc_long_active)
           accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX) if CC.longActive else 0)
           starting = actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or CS.out.vEgo < 0.25)
           can_sends.extend(self.CCS.create_acc_accel_control(self.packer_pt, self.CAN.pt, CS.acc_type, CC.longActive, accel,
