@@ -194,7 +194,13 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
   has_lead = acc_active and hud_control.leadVisible
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
-    "ACC_Wunschgeschw_02": set_speed if set_speed < 250 else 327.04,
+    # Stock J428 invalidates Wunschgeschw (327.04) whenever ACC is not active and
+    # restores the stored speed at the moment of activation (B8PA rlog route
+    # 0000009c: standby/off frames all 327.04, 35.84 appears exactly at the
+    # activation frame). The Kombi redraws the ACC lead-car/road graphic on this
+    # invalid->valid transition; OP previously kept the last set speed in
+    # standby, so cancel/resume produced no transition and no redraw.
+    "ACC_Wunschgeschw_02": (set_speed if set_speed < 250 else 327.04) if acc_active else 327.04,
     # Stock J428 constants, REVISED per B8PA rlog evidence (route 0000009c, bus2):
     # standby/off (status 2/7): Display_Prio=3, Anzeige_Zeitluecke=0 — but ACTIVE
     # (status 3) switches to Display_Prio=1, Anzeige_Zeitluecke=1 (Anzeige_Zeitluecke
