@@ -151,8 +151,17 @@ def create_acc_accel_control(packer, bus, acc_type, acc_enabled, accel, acc_cont
   return commands
 
 
-def acc_hud_status_value(main_switch_on, acc_faulted, long_active):
-  # TODO: happens to resemble the ACC control value for now, but extend this for init/gas override later
+def acc_hud_status_value(main_switch_on, acc_faulted, long_active, gas_pressed=False):
+  # Status=4 = "background override": driver pressing gas pedal while longActive.
+  # rlog evidence (route_b8pa): stock car shows Status=4 + Prim=0 when the driver
+  # takes over with throttle; without this, Prim stays 1 (green ACC icon), which
+  # contradicts the stock cluster display.
+  # This is the MLB-private implementation; the MQB/MEB/PQ version in mqbcan.py is unchanged.
+  # (restored from ba57a6cc; lost in the 2026-09-11 zip export)
+  if acc_faulted:
+    return acc_control_value(main_switch_on, acc_faulted, long_active)
+  if long_active and gas_pressed:
+    return 4
   return acc_control_value(main_switch_on, acc_faulted, long_active)
 
 
@@ -186,11 +195,14 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
     "ACC_Wunschgeschw_02": set_speed if set_speed < 250 else 327.04,
-    # Stock J428 constants in all 5000 observed frames (active/passive/lead/no-lead):
-    # Display_Prio=3, Typ_Tachokranz=1, Anzeige_Zeitluecke=0. OP must match these —
-    # the Kombi drops the lead-car glyph when they deviate (distance bar still renders).
-    "ACC_Display_Prio": 3,
-    "ACC_Anzeige_Zeitluecke": 0,
+    # Stock J428 constants, REVISED per B8PA rlog evidence (route 0000009c, bus2):
+    # standby/off (status 2/7): Display_Prio=3, Anzeige_Zeitluecke=0 — but ACTIVE
+    # (status 3) switches to Display_Prio=1, Anzeige_Zeitluecke=1 (Anzeige_Zeitluecke
+    # is the time-gap/distance-cursor display enable). OP previously sent 3/0 always,
+    # which matches standby but deviates in the active state — suspected cause of the
+    # cluster dropping the lead-car/road graphic after cancel/resume cycles.
+    "ACC_Display_Prio": 1 if acc_active else 3,
+    "ACC_Anzeige_Zeitluecke": 1 if acc_active else 0,
     "ACC_Gesetzte_Zeitluecke": hud_control.leadDistanceBars, # TODO: Update openpilot charisma using stock rocker switch
     "ACC_Tachokranz": 1 if acc_active else 0,
     "ACC_Typ_Tachokranz": 1,
