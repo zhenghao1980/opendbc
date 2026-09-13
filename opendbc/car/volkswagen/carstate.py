@@ -339,9 +339,13 @@ class CarState(CarStateBase):
     ret.gasPressed = pt_cp.vl["Motor_03"]["MO_Fahrpedalrohwert_01"] > 0
     ret.gearShifter = self.parse_gear_shifter(self.CCP.shifter_values.get(alt_cp.vl["Getriebe_03"]["GE_Waehlhebel"], None))
 
-    # TODO: We don't have a true mainswitch state yet, might need stateful tracking on LS_01 if momentary-press is a thing
-    # TSK_04.TSK_Status_GRA_ACC_02 0 = not engaged, 1 = engaged, 2 = engaged with driver accel override, 3 = fault
-    ret.cruiseState.available = alt_cp.vl["TSK_04"]["TSK_Status_GRA_ACC_02"] in (0, 1, 2)
+    # LS_01.LS_Hauptschalter is the true latched state of the ACC lever main
+    # switch (0 = "Gerastet Aus", verified against B8PA rlog lever pushes).
+    # Stock J428 clears the stored set speed when the lever is pushed to OFF;
+    # making available follow the lever lets card's VCruiseHelper do the same
+    # (vCruise resets to UNSET while unavailable), so a later RES is a no-op
+    # exactly like stock instead of engaging with a stale speed.
+    ret.cruiseState.available = bool(pt_cp.vl["LS_01"]["LS_Hauptschalter"])
     ret.cruiseState.enabled = alt_cp.vl["TSK_04"]["TSK_Status_GRA_ACC_02"] in (1, 2)
     ret.accFaulted = alt_cp.vl["TSK_04"]["TSK_Status_GRA_ACC_02"] == 3
     ret.cruiseState.speed = ext_cp.vl["ACC_02"]["ACC_Wunschgeschw_02"] * CV.KPH_TO_MS
