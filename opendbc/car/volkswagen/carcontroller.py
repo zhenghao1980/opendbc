@@ -108,6 +108,7 @@ class CarController(CarControllerBase):
     self.texte_timer = 0
     self.last_long_active = False
     self.gra_arm_frame = -1000
+    self.acc_gas_override = False
 
   def update(self, CC, CS, now_nanos):
     actuators = CC.actuators
@@ -188,6 +189,19 @@ class CarController(CarControllerBase):
 
     # **** Acceleration Controls ******************************************** #
 
+    if self.CP.flags & VolkswagenFlags.MLB:
+      # Gas-override display latch: controlsd re-raises CC.longActive a frame or
+      # two AFTER gasPressed clears, which produced a 1-frame ACC_01 status=2
+      # (standby) blip at override exit (route 00000019 t=577.07/583.50). The
+      # Kombi latches that blip as "ACC deactivated" and then requires a fresh
+      # arm sequence to redraw — display dead from the next override on. Hold
+      # the override until longitudinal resumes (CC.longActive) or disengages
+      # (cruiseState.enabled tracks longitudinal on this port).
+      if CC.longActive and CS.out.gasPressed:
+        self.acc_gas_override = True
+      elif CC.longActive or not CS.out.cruiseState.enabled:
+        self.acc_gas_override = False
+
     if self.CP.openpilotLongitudinalControl:
       if self.frame % self.CCP.ACC_CONTROL_STEP == 0:
         if self.CP.flags & VolkswagenFlags.MEB:
@@ -206,7 +220,7 @@ class CarController(CarControllerBase):
             # 2 (standby) here while ACC_02 says 4 is inconsistent, and the Kombi drops
             # the ACC display ~2s into the override. accel/limits stay gated by
             # CC.longActive below — only the status value reflects the override.
-            acc_long_active = CC.longActive or (CC.enabled and CS.out.gasPressed)
+            acc_long_active = CC.longActive or self.acc_gas_override
             acc_control = 4 if (acc_long_active and CS.out.gasPressed) else \
                           self.CCS.acc_control_value(CS.out.cruiseState.available, CS.out.accFaulted, acc_long_active)
           accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX) if CC.longActive else 0)
@@ -266,7 +280,7 @@ class CarController(CarControllerBase):
           # controlsd drops CC.longActive while overrideLongitudinal is present; using it
           # directly makes the HUD fall to Status=2 (standby) for the whole override, so
           # the Kombi hides the graphic ~2s later and never redraws it (no arm sequence).
-          hud_long_active = CC.longActive or (CC.enabled and CS.out.gasPressed and self.CP.openpilotLongitudinalControl)
+          hud_long_active = CC.longActive or self.acc_gas_override
           acc_hud_status = self.CCS.acc_hud_status_value(CS.out.cruiseState.available, CS.out.accFaulted,
                                                          hud_long_active, gas_pressed=CS.out.gasPressed)
         else:
