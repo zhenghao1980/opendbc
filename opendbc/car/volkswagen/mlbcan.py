@@ -188,7 +188,7 @@ def _abstandsindex(lead_distance_m: float) -> int:
   return _ABSTANDSINDEX_LUT[-1][1]
 
 
-def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text):
+def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text, prim_pulse=True):
 
   acc_active = acc_hud_status in (3, 4)
   has_lead = acc_active and hud_control.leadVisible
@@ -207,7 +207,11 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
     "ACC_Tachokranz": 1 if acc_active else 0,
     "ACC_Typ_Tachokranz": 1,
     "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if has_lead else 0),
-    "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if acc_active else 0),
+    # Stock J428 pulses Status_Prim_Anz=1 for only ~1.1s after ACC activation
+    # (B8PA rlog route 0000009c: prim 0->1 at +0.19s, back to 0 at +1.32s), then
+    # holds 0 for the rest of the active period — it is a "new set speed"
+    # highlight, not a steady-state flag. OP previously held 1 the whole time.
+    "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if (acc_active and prim_pulse) else 0),
     "ACC_Akustik": 1 if hud_control.audibleAlert == 5 else 0, # Audible alert on OP warningImmediate
     # Stock J428 only draws the lead-car glyph when Abstandsindex carries a real distance index
     # (1023 = "road with green/red area" special display, 1022 = "grey road" special display)

@@ -104,6 +104,8 @@ class CarController(CarControllerBase):
     self.last_lead_distance_bars = 0
     self.mlb_hud_text = 0
     self.texte_timer = 0
+    self.prim_timer = 0
+    self.last_long_active = False
 
   def update(self, CC, CS, now_nanos):
     actuators = CC.actuators
@@ -276,8 +278,13 @@ class CarController(CarControllerBase):
             self.mlb_hud_text = {1: 2, 2: 3, 3: 4, 4: 5}.get(hud_control.leadDistanceBars, 0) if CC.longActive else 0
 
         if self.CP.flags & VolkswagenFlags.MLB:
+          # Stock J428 pulses Status_Prim_Anz for ~1.1s on ACC activation only
+          if CC.longActive and not self.last_long_active:
+            self.prim_timer = self.frame + int(1.3 / DT_CTRL)
+          self.last_long_active = CC.longActive
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
-                                                           hud_control.leadDistance, hud_control, self.mlb_hud_text))
+                                                           hud_control.leadDistance, hud_control, self.mlb_hud_text,
+                                                           prim_pulse=self.frame <= self.prim_timer))
         else:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            lead_distance, hud_control.leadDistanceBars))
