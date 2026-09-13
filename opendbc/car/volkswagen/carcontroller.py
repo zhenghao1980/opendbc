@@ -1,6 +1,8 @@
 import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, structs
+
+ButtonType = structs.CarState.ButtonEvent.Type
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarControllerBase
@@ -105,6 +107,7 @@ class CarController(CarControllerBase):
     self.mlb_hud_text = 0
     self.texte_timer = 0
     self.last_long_active = False
+    self.gra_arm_frame = -1000
 
   def update(self, CC, CS, now_nanos):
     actuators = CC.actuators
@@ -249,9 +252,14 @@ class CarController(CarControllerBase):
         if hud_control.leadVisible and self.frame * DT_CTRL > 1.0:  # Don't display lead until we know the scaling factor
           lead_distance = 512 if CS.upscale_lead_car_signal else 8
         if self.CP.flags & VolkswagenFlags.MLB:
-          # gas override -> ACC Status_Anzeige=4 (restored from ba57a6cc)
+          # Gas override keeps ACC active on the cluster (stock Status=4 = "background
+          # override", the Kombi shows "ACC:override" and KEEPS the lead-car graphic).
+          # controlsd drops CC.longActive while overrideLongitudinal is present; using it
+          # directly makes the HUD fall to Status=2 (standby) for the whole override, so
+          # the Kombi hides the graphic ~2s later and never redraws it (no arm sequence).
+          hud_long_active = CC.longActive or (CC.enabled and CS.out.gasPressed and self.CP.openpilotLongitudinalControl)
           acc_hud_status = self.CCS.acc_hud_status_value(CS.out.cruiseState.available, CS.out.accFaulted,
-                                                         CC.longActive, gas_pressed=CS.out.gasPressed)
+                                                         hud_long_active, gas_pressed=CS.out.gasPressed)
         else:
           acc_hud_status = self.CCS.acc_hud_status_value(CS.out.cruiseState.available, CS.out.accFaulted, CC.longActive)
         # FIXME: PQ may need to use the on-the-wire mph/kmh toggle to fix rounding errors
@@ -260,6 +268,16 @@ class CarController(CarControllerBase):
 
         # MLB:Logic for hud text, bottom acc text display
         if self.CP.flags & VolkswagenFlags.MLB:
+          # Pre-active display arming: stock J428 switches the DISPLAY fields to the
+          # active presentation ~0.1s before ACC_Status flips to 3 (pre-frames sent
+          # the moment the driver presses SET/RES, while status is still 2 — B8PA
+          # rlog route 0000000f t=885.26). The Kombi appears to require this
+          # arm->activate sequence to (re)draw the lead-car graphic after a cancel.
+          if any(b.pressed and b.type in (ButtonType.setCruise, ButtonType.resumeCruise)
+                 for b in CS.out.buttonEvents):
+            self.gra_arm_frame = self.frame
+            self.texte_timer = self.frame + int(2.0 / DT_CTRL)
+            self.mlb_hud_text = 21
           # Stock J428 sends a ~2s announcement (Display_Prio=2 + Texte) on EVERY
           # ACC activation, not just on set-speed changes (route 0000000a resume
           # at t=369.05). Without this the Kombi never redraws the lead-car
@@ -280,9 +298,11 @@ class CarController(CarControllerBase):
             self.mlb_hud_text = 0
 
         if self.CP.flags & VolkswagenFlags.MLB:
+          display_armed = not CC.longActive and (self.frame - self.gra_arm_frame) <= int(0.5 / DT_CTRL)
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            hud_control.leadDistance, hud_control, self.mlb_hud_text,
-                                                           announcing=CC.longActive and self.frame <= self.texte_timer))
+                                                           announcing=self.frame <= self.texte_timer,
+                                                           display_armed=display_armed))
         else:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            lead_distance, hud_control.leadDistanceBars))

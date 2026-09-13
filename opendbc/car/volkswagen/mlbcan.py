@@ -188,9 +188,15 @@ def _abstandsindex(lead_distance_m: float) -> int:
   return _ABSTANDSINDEX_LUT[-1][1]
 
 
-def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text, announcing=False):
+def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text, announcing=False,
+                           display_armed=False):
 
   acc_active = acc_hud_status in (3, 4)
+  # display_armed: stock J428 pre-frames — display fields switch to the active
+  # presentation ~0.1s BEFORE ACC_Status flips to 3 (sent the moment the driver
+  # presses SET/RES). The Kombi requires this arm->activate sequence to (re)draw
+  # the lead-car graphic after a cancel.
+  acc_display = acc_active or display_armed
   has_lead = acc_active and hud_control.leadVisible
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
@@ -207,10 +213,10 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
     # announcement. OP previously announced only on set-speed CHANGES, so the
     # graphic appeared at first activation (327->valid speed change) but a
     # resume with unchanged speed announced nothing and was never redrawn.
-    "ACC_Display_Prio": 2 if (acc_active and announcing) else 3,
+    "ACC_Display_Prio": 2 if (acc_display and announcing) else 3,
     "ACC_Anzeige_Zeitluecke": 0,
     "ACC_Gesetzte_Zeitluecke": hud_control.leadDistanceBars, # TODO: Update openpilot charisma using stock rocker switch
-    "ACC_Tachokranz": 1 if acc_active else 0,
+    "ACC_Tachokranz": 1 if acc_display else 0,
     "ACC_Typ_Tachokranz": 1,
     "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if has_lead else 0),
     # Stock holds Status_Prim_Anz=1 essentially the whole CONTROLLING period
@@ -220,7 +226,7 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
     "ACC_Akustik": 1 if hud_control.audibleAlert == 5 else 0, # Audible alert on OP warningImmediate
     # Stock J428 only draws the lead-car glyph when Abstandsindex carries a real distance index
     # (1023 = "road with green/red area" special display, 1022 = "grey road" special display)
-    "ACC_Abstandsindex": _abstandsindex(lead_distance) if has_lead and lead_distance > 1.0 else (1023 if acc_active else 1022),
+    "ACC_Abstandsindex": _abstandsindex(lead_distance) if has_lead and lead_distance > 1.0 else (1023 if acc_display else 1022),
     "ACC_Texte_Primaeranz": mlb_hud_text,
   }
 
