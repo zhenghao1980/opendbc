@@ -268,7 +268,12 @@ class CarController(CarControllerBase):
             self.mlb_hud_text = {1: 2, 2: 3, 3: 4, 4: 5}.get(hud_control.leadDistanceBars, 0)
             self.last_lead_distance_bars = hud_control.leadDistanceBars
           elif self.frame > self.texte_timer:
-            self.mlb_hud_text = 0
+            # Stock J428 keeps the current time-gap setting as the PERMANENT primary
+            # text while ACC is active (B8PA rlog route 0000009c: texte=3 constant for
+            # bars=2, matching the {1:2,2:3,3:4,4:5} mapping). OP previously sent 0
+            # here; the Kombi drops the lead-car/road graphic without a persistent
+            # primary text and does not redraw it after a cancel/resume cycle.
+            self.mlb_hud_text = {1: 2, 2: 3, 3: 4, 4: 5}.get(hud_control.leadDistanceBars, 0) if CC.longActive else 0
 
         if self.CP.flags & VolkswagenFlags.MLB:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
