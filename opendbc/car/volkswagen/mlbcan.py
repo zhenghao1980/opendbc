@@ -213,9 +213,10 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
     "ACC_Tachokranz": 1 if acc_active else 0,
     "ACC_Typ_Tachokranz": 1,
     "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if has_lead else 0),
-    # Stock holds Status_Prim_Anz=1 essentially the whole active period
-    # (route 0000000a steady state); brief 0 blips exist but 1 is the norm.
-    "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if acc_active else 0),
+    # Stock holds Status_Prim_Anz=1 essentially the whole CONTROLLING period
+    # (route 0000000a/0000000f steady state) but drops it to 0 during gas
+    # override (Status=4, route 0000000f t=872.37).
+    "ACC_Status_Prim_Anz": 2 if hud_control.visualAlert > 0 else (1 if acc_hud_status == 3 else 0),
     "ACC_Akustik": 1 if hud_control.audibleAlert == 5 else 0, # Audible alert on OP warningImmediate
     # Stock J428 only draws the lead-car glyph when Abstandsindex carries a real distance index
     # (1023 = "road with green/red area" special display, 1022 = "grey road" special display)
