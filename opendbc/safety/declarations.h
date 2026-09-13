@@ -60,7 +60,6 @@
 #define UPDATE_VEHICLE_SPEED_2(val_ms) (update_sample(&vehicle_speed_2, ROUND((val_ms) * VEHICLE_SPEED_FACTOR)))
 
 uint32_t GET_BYTES(const CANPacket_t *msg, int start, int len);
-uint64_t GET_BYTES_64(const CANPacket_t *msg, int start, int len);
 
 extern const int MAX_WRONG_COUNTERS;
 #define MAX_ADDR_CHECK_MSGS 3U
@@ -251,7 +250,7 @@ bool longitudinal_brake_checks(int desired_brake, const LongitudinalLimits limit
 void pcm_cruise_check(bool cruise_engaged);
 void speed_mismatch_check(const float speed_2);
 
-void safety_tick(void);
+void safety_tick(const safety_config *safety_config);
 
 // This can be set by the safety hooks
 extern bool controls_allowed;
@@ -320,6 +319,16 @@ extern CurvatureSteeringState curvature_state;
 
 // This flag allows AEB to be commanded from openpilot.
 #define ALT_EXP_ALLOW_AEB 16
+
+// Disengage on brake pedal press is a stock safety feature. With this flag the
+// brake pedal does not clear controls_allowed. Used by the separate lateral
+// control mode where brake only cancels longitudinal and lateral remains active.
+#define ALT_EXP_DISABLE_DISENGAGE_ON_BRAKE 32
+
+// Cancel button press is a stock disengage. With this flag the cancel button does not
+// clear controls_allowed. Used by the separate lat/long control mode where cancel only
+// drops longitudinal and lateral stays under exclusive ALA button control.
+#define ALT_EXP_DISABLE_DISENGAGE_ON_CANCEL 64
 
 extern int alternative_experience;
 

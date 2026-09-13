@@ -21,49 +21,50 @@ static uint8_t mg_get_counter(const CANPacket_t *msg) {
   uint8_t counter = 0U;
   if (msg->addr == 0x23cU) {
     counter = (msg->data[4] >> 4) & 0xFU;
-  }
-  if (msg->addr == 0x1ecU) {
+  } else if (msg->addr == 0x1ecU) {
     counter = (msg->data[0] >> 4) & 0xFU;
-  }
-  if (msg->addr == 0x242U) {
+  } else if (msg->addr == 0x242U) {
     counter = (msg->data[0] >> 3) & 0xFU;
-  }
-  if (msg->addr == 0x1b6U) {
+  } else if (msg->addr == 0x1b6U) {
     counter = msg->data[6] & 0xFU;
+  } else {
+    // No counter for this message
   }
   return counter;
 }
 
 static void mg_rx_hook(const CANPacket_t *msg) {
-  // Vehicle speed
-  if (msg_matches(msg, 0x23cU, 0U)) {
-    float speed = (((msg->data[2] & 0x7FU) << 8) | msg->data[3]) * 0.015625;
-    vehicle_moving = speed > 0.0;
-    UPDATE_VEHICLE_SPEED(speed * KPH_TO_MS);
-  }
+  if (msg->bus == 0U)  {
+    // Vehicle speed
+    if (msg->addr == 0x23cU) {
+      float speed = (((msg->data[2] & 0x7FU) << 8) | msg->data[3]) * 0.015625;
+      vehicle_moving = speed > 0.0;
+      UPDATE_VEHICLE_SPEED(speed * KPH_TO_MS);
+    }
 
-  // Gas pressed
-  if (msg_matches(msg, 0xafU, 0U)) {
-    gas_pressed = msg->data[0] != 0U;
-  }
+    // Gas pressed
+    if (msg->addr == 0xafU) {
+      gas_pressed = msg->data[0] != 0U;
+    }
 
-  // Driver torque
-  if (msg_matches(msg, 0x1ecU, 0U)) {
-    int torque_driver_new = (((msg->data[4] & 0x7U) << 8) | msg->data[5]) - 1024U;
-    update_sample(&torque_driver, torque_driver_new);
-  }
+    // Driver torque
+    if (msg->addr == 0x1ecU) {
+      int torque_driver_new = (((msg->data[4] & 0x7U) << 8) | msg->data[5]) - 1024U;
+      update_sample(&torque_driver, torque_driver_new);
+    }
 
-  // Brake pressed
-  if (msg_matches(msg, 0x1b6U, 0U)) {
-    brake_pressed = GET_BIT(msg, 10U);
-  }
+    // Brake pressed
+    if (msg->addr == 0x1b6U) {
+      brake_pressed = GET_BIT(msg, 10U);
+    }
 
-  // Cruise state
-  if (msg_matches(msg, 0x242U, 0U)) {
-    int cruise_state = (msg->data[5] & 0x38U) >> 3;
-    bool cruise_engaged = (cruise_state == 2) ||  // Active
-                          (cruise_state == 3);    // Override
-    pcm_cruise_check(cruise_engaged);
+    // Cruise state
+    if (msg->addr == 0x242U) {
+      int cruise_state = (msg->data[5] & 0x38U) >> 3;
+      bool cruise_engaged = (cruise_state == 2) ||  // Active
+                            (cruise_state == 3);    // Override
+      pcm_cruise_check(cruise_engaged);
+    }
   }
 }
 

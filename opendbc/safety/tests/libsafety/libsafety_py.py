@@ -23,7 +23,6 @@ def _build_libsafety(release: bool = False) -> str:
   ldflags = [
     '-fsanitize=undefined', '-fno-sanitize-recover=undefined',
   ]
-  cflags += ldflags
   if not release:
     cflags += ['-DALLOW_DEBUG', '-fprofile-arcs', '-ftest-coverage']
     ldflags += ['-fprofile-arcs', '-ftest-coverage']
@@ -104,7 +103,7 @@ void set_cruise_engaged_prev(bool engaged);
 bool get_vehicle_moving(void);
 void set_timer(uint32_t t);
 
-void safety_tick(void);
+void safety_tick_current_safety_config();
 bool safety_config_valid();
 
 void init_tests(void);

@@ -14,6 +14,9 @@ bool volkswagen_set_button_prev = false;
 extern bool volkswagen_resume_button_prev;
 bool volkswagen_resume_button_prev = false;
 
+extern bool volkswagen_ala_button_prev;
+bool volkswagen_ala_button_prev = false;
+
 extern bool volkswagen_brake_pedal_switch;
 extern bool volkswagen_brake_pressure_detected;
 bool volkswagen_brake_pedal_switch = false;
@@ -22,6 +25,7 @@ bool volkswagen_brake_pressure_detected = false;
 #define MSG_LH_EPS_03        0x09FU   // RX from EPS, for driver steering torque
 #define MSG_ESP_19           0x0B2U   // RX from ABS, for wheel speeds
 #define MSG_ESP_05           0x106U   // RX from ABS, for brake switch state
+#define MSG_ACC_01           0x109U   // TX by OP, ACC control instructions to the drivetrain coordinator
 #define MSG_TSK_06           0x120U   // RX from ECU, for ACC status from drivetrain coordinator
 #define MSG_MOTOR_20         0x121U   // RX from ECU, for driver throttle input
 #define MSG_ACC_06           0x122U   // TX by OP, ACC control instructions to the drivetrain coordinator
@@ -37,23 +41,26 @@ bool volkswagen_brake_pressure_detected = false;
 #define MSG_LS_01       0x10BU   // TX by OP, ACC control buttons for cancel/resume
 #define MSG_MOTOR_03    0x105U   // RX from ECU, for driver throttle input and brake switch status
 #define MSG_TSK_04      0x10EU   // RX from ECU, for ACC status from drivetrain coordinator
+#define MSG_BCM_01      0x526U   // RX from BCM, for ALA (lane keep assist) button
+#define MSG_LKA_LAMP     0x30AU   // TX by OP, B8 Kombi lane-keep lamp state (camera LKA lamp msg)
 
 static void volkswagen_common_init(void) {
   volkswagen_longitudinal = false;
   volkswagen_set_button_prev = false;
   volkswagen_resume_button_prev = false;
+  volkswagen_ala_button_prev = false;
   volkswagen_brake_pedal_switch = false;
   volkswagen_brake_pressure_detected = false;
   gen_crc_lookup_table_8(0x2F, volkswagen_crc8_lut_8h2f);
   return;
 }
 
-static uint32_t volkswagen_mqb_meb_get_checksum(const CANPacket_t *msg) {
+static uint32_t volkswagen_mqb_meb_mlb_get_checksum(const CANPacket_t *msg) {
   return (uint8_t)msg->data[0];
 }
 
-static uint8_t volkswagen_mqb_meb_get_counter(const CANPacket_t *msg) {
-  // MQB/MEB message counters are consistently found at LSB 8.
+static uint8_t volkswagen_mqb_meb_mlb_get_counter(const CANPacket_t *msg) {
+  // MQB/MEB/MLB message counters are consistently found at LSB 8.
   return (uint8_t)msg->data[1] & 0xFU;
 }
 
@@ -69,21 +76,19 @@ static uint32_t volkswagen_mqb_meb_compute_crc(const CANPacket_t *msg) {
     crc = volkswagen_crc8_lut_8h2f[crc];
   }
 
-  uint8_t counter = volkswagen_mqb_meb_get_counter(msg);
+  uint8_t counter = volkswagen_mqb_meb_mlb_get_counter(msg);
   if (msg->addr == MSG_LH_EPS_03) {
     crc ^= (uint8_t[]){0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5}[counter];
-  }
-  if (msg->addr == MSG_ESP_05) {
+  } else if (msg->addr == MSG_ESP_05) {
     crc ^= (uint8_t[]){0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07}[counter];
-  }
-  if (msg->addr == MSG_TSK_06) {
+  } else if (msg->addr == MSG_TSK_06) {
     crc ^= (uint8_t[]){0xC4, 0xE2, 0x4F, 0xE4, 0xF8, 0x2F, 0x56, 0x81, 0x9F, 0xE5, 0x83, 0x44, 0x05, 0x3F, 0x97, 0xDF}[counter];
-  }
-  if (msg->addr == MSG_MOTOR_20) {
+  } else if (msg->addr == MSG_MOTOR_20) {
     crc ^= (uint8_t[]){0xE9, 0x65, 0xAE, 0x6B, 0x7B, 0x35, 0xE5, 0x5F, 0x4E, 0xC7, 0x86, 0xA2, 0xBB, 0xDD, 0xEB, 0xB4}[counter];
-  }
-  if (msg->addr == MSG_GRA_ACC_01) {
+  } else if (msg->addr == MSG_GRA_ACC_01) {
     crc ^= (uint8_t[]){0x6A, 0x38, 0xB4, 0x27, 0x22, 0xEF, 0xE1, 0xBB, 0xF8, 0x80, 0x84, 0x49, 0xC7, 0x9E, 0x1E, 0x2B}[counter];
+  } else {
+    // Undefined CAN message, CRC check expected to fail
   }
   crc = volkswagen_crc8_lut_8h2f[crc];
 
@@ -110,4 +115,19 @@ static int volkswagen_mlb_mqb_steering_control_torque(const CANPacket_t *msg) {
     desired_torque *= -1;
   }
   return desired_torque;
+}
+
+// XOR over the payload, skipping the byte the checksum itself lives in.
+// Mirrors xor_checksum() in opendbc/car/volkswagen/
+static uint8_t volkswagen_xor_checksum(const CANPacket_t *msg, unsigned int checksum_byte, uint8_t initial_value) {
+  unsigned int len = GET_LEN(msg);
+  uint8_t checksum = initial_value;
+
+  for (unsigned int i = 0U; i < len; i++) {
+    if (i != checksum_byte) {
+      checksum ^= (uint8_t)msg->data[i];
+    }
+  }
+
+  return checksum;
 }

@@ -62,11 +62,13 @@ class CarControllerParams:
   STEER_DRIVER_FACTOR = 1                  # from dbc
 
   STEER_TIME_STUCK_TORQUE = 1.9            # EPS limits same torque to 6 seconds, reset timer 3x within that period
+  STEER_TIME_RESET = 1.1                   # HCA must stay disabled this long for the EPS to reset its steer timer
 
   DEFAULT_MIN_STEER_SPEED = 0.4            # m/s, newer EPS racks fault below this speed, don't show a low speed alert
 
   ACCEL_MAX = 2.0                          # 2.0 m/s^2 max acceleration
   ACCEL_MIN = -3.5                         # 3.5 m/s^2 max deceleration
+  MLB_ACCEL_MIN = -2.95                    # m/s^2; revert B8PA -3.5 (rlog 6c-17 实际只撞到 -3.25，-2.95 钳位已足够；原 -3.0 trips 注释保留保守余量)
 
   def __init__(self, CP):
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
@@ -142,6 +144,7 @@ class CarControllerParams:
       self.hca_status_values = can_define.dv["LH_EPS_03"]["EPS_HCA_Status"]
 
       if CP.flags & VolkswagenFlags.MLB:
+        self.ACCEL_MIN = self.MLB_ACCEL_MIN
         self.STEER_DRIVER_ALLOWANCE = 60  # Driver intervention threshold 0.6 Nm
         self.STEER_DELTA_UP = 9  # Max HCA reached in 0.66s (STEER_MAX / (50Hz * 0.66))
         self.STEER_DELTA_DOWN = 10  # Min HCA reached in 0.60s (STEER_MAX / (50Hz * 0.60))
@@ -154,7 +157,9 @@ class CarControllerParams:
           Button(structs.CarState.ButtonEvent.Type.accelCruise, "LS_01", "LS_Tip_Hoch", [1]),
           Button(structs.CarState.ButtonEvent.Type.decelCruise, "LS_01", "LS_Tip_Runter", [1]),
           Button(structs.CarState.ButtonEvent.Type.cancel, "LS_01", "LS_Abbrechen", [1]),
-          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "LS_01", "LS_Verstellung_Zeitluecke", [1]),
+          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruise, "LS_01", "LS_Verstellung_Zeitluecke", [1]),  # rocker left: Dist -1 (closer)
+          Button(structs.CarState.ButtonEvent.Type.gapAdjustCruiseUp, "LS_01", "LS_Verstellung_Zeitluecke", [2]),  # rocker right: Dist +1 (farther)
+          Button(structs.CarState.ButtonEvent.Type.lkas, "BCM", "ALA_TASTE", [1]),
         ]
 
       else:
@@ -322,7 +327,7 @@ class VWCarDocs(CarDocs):
 # FW_VERSIONS for that existing CAR.
 
 class CAR(Platforms):
-  config: VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig | VolkswagenMEBPlatformConfig
+  config: VolkswagenMQBPlatformConfig | VolkswagenPQPlatformConfig | VolkswagenMEBPlatformConfig | VolkswagenMLBPlatformConfig
 
   VOLKSWAGEN_ARTEON_MK1 = VolkswagenMQBPlatformConfig(
     [
@@ -386,14 +391,14 @@ class CAR(Platforms):
   )
   VOLKSWAGEN_ID4_MK1 = VolkswagenMEBPlatformConfig(
     [
-      VWCarDocs("Volkswagen ID.4 2021-23", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[]),
+      VWCarDocs("Volkswagen ID.4 2021-23"),
     ],
     VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
     chassis_codes={"E2"},
     wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
   )
   VOLKSWAGEN_ID4_MK2 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("Volkswagen ID.4 2024-25", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
+    [VWCarDocs("Volkswagen ID.4 2024-25")],
     VolkswagenCarSpecs(mass=2224, wheelbase=2.77),
     chassis_codes={"E8"},
     wmis={WMI.VOLKSWAGEN_USA_SUV, WMI.VOLKSWAGEN_EUROPE_CAR, WMI.VOLKSWAGEN_EUROPE_SUV},
@@ -515,9 +520,23 @@ class CAR(Platforms):
   )
   AUDI_Q5_MK1 = VolkswagenMLBPlatformConfig(
     [VWCarDocs("Audi Q5 2013-17")],
-    VolkswagenCarSpecs(mass=1895, wheelbase=2.81),
+    VolkswagenCarSpecs(mass=1895, wheelbase=2.81, minEnableSpeed=15 * CV.KPH_TO_MS),
     chassis_codes={"8R"},
     wmis={WMI.AUDI_EUROPE_MPV, WMI.AUDI_GERMANY_CAR},
+  )
+  # Audi A4/A4L B8PA (8K) facelift only — pre-facelift B8 lacks EPS
+  AUDI_A4_B8PA = VolkswagenMLBPlatformConfig(
+    [VWCarDocs("Audi A4/A4L (B8.5) 2013-16")],
+    # minEnableSpeed=15kph is a hard car-side limit, verified on road (route
+    # 0000006c): the TSK coordinator in the engine ECU (J623) exits cruise at
+    # ~14 kph and the ESP stops executing decel requests with it; engaging at
+    # standstill faults TSK (sticky until ignition cycle). OP must disengage
+    # longitudinal at 15 first so there is no no-braking gap.
+    VolkswagenCarSpecs(mass=1750, wheelbase=2.869,
+                       minEnableSpeed=15 * CV.KPH_TO_MS),
+    chassis_codes={"8K"},
+    # WAU = 德国产(进口A4/A5); LFV = 一汽奥迪长春产 A4L
+    wmis={WMI.AUDI_GERMANY_CAR, WMI.VOLKSWAGEN_CHINA_FAW},
   )
   PORSCHE_MACAN_MK1 = VolkswagenMLBPlatformConfig(
     [VWCarDocs("Porsche Macan 2017-24")],
@@ -536,7 +555,7 @@ class CAR(Platforms):
     wmis={WMI.SEAT},
   )
   CUPRA_BORN_MK1 = VolkswagenMEBPlatformConfig(
-    [VWCarDocs("CUPRA Born 2021-23", car_parts=CarParts.common([CarHarness.vw_meb]), footnotes=[])],
+    [VWCarDocs("CUPRA Born 2021-23"),],
     VolkswagenCarSpecs(mass=1956, wheelbase=2.766),
     chassis_codes={"K1"},
     wmis={WMI.SEAT},

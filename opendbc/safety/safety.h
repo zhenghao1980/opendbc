@@ -40,16 +40,6 @@ uint32_t GET_BYTES(const CANPacket_t *msg, int start, int len) {
   return ret;
 }
 
-// Read up to eight bytes in little-endian order, without alignment assumptions.
-uint64_t GET_BYTES_64(const CANPacket_t *msg, int start, int len) {
-  uint64_t ret = 0U;
-  for (int i = 0; i < len; i++) {
-    const uint32_t shift = i * 8;
-    ret |= ((uint64_t)msg->data[start + i]) << shift;
-  }
-  return ret;
-}
-
 const int MAX_WRONG_COUNTERS = 5;
 
 // This can be set by the safety hooks
@@ -120,12 +110,16 @@ static bool is_msg_valid(RxCheck addr_list[], int index) {
 }
 
 static int get_addr_check_index(const CANPacket_t *msg, RxCheck addr_list[], const int len) {
+  int addr = msg->addr;
+  int length = GET_LEN(msg);
+
   int index = -1;
   for (int i = 0; i < len; i++) {
     // if multiple msgs are allowed, determine which one is present on the bus
     if (!addr_list[i].status.msg_seen) {
       for (uint8_t j = 0U; (j < MAX_ADDR_CHECK_MSGS) && (addr_list[i].msg[j].addr != 0); j++) {
-        if (msg_matches(msg, addr_list[i].msg[j].addr, addr_list[i].msg[j].bus, addr_list[i].msg[j].len)) {
+        if ((addr == addr_list[i].msg[j].addr) && (msg->bus == addr_list[i].msg[j].bus) &&
+              (length == addr_list[i].msg[j].len)) {
           addr_list[i].status.index = j;
           addr_list[i].status.msg_seen = true;
           break;
@@ -135,7 +129,8 @@ static int get_addr_check_index(const CANPacket_t *msg, RxCheck addr_list[], con
 
     if (addr_list[i].status.msg_seen) {
       int idx = addr_list[i].status.index;
-      if (msg_matches(msg, addr_list[i].msg[idx].addr, addr_list[i].msg[idx].bus, addr_list[i].msg[idx].len)) {
+      if ((addr == addr_list[i].msg[idx].addr) && (msg->bus == addr_list[i].msg[idx].bus) &&
+          (length == addr_list[i].msg[idx].len)) {
         index = i;
         break;
       }
@@ -227,9 +222,12 @@ bool safety_rx_hook(const CANPacket_t *msg) {
 }
 
 static bool tx_msg_safety_check(const CANPacket_t *msg, const CanMsg msg_list[], int len) {
+  int addr = msg->addr;
+  int length = GET_LEN(msg);
+
   bool whitelisted = false;
   for (int i = 0; i < len; i++) {
-    if (msg_matches(msg, msg_list[i].addr, msg_list[i].bus, msg_list[i].len)) {
+    if ((addr == msg_list[i].addr) && (msg->bus == msg_list[i].bus) && (length == msg_list[i].len)) {
       whitelisted = true;
       break;
     }
@@ -317,25 +315,30 @@ void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
 }
 
 // 1Hz safety function called by main. Now just a check for lagging safety messages
-void safety_tick(void) {
+void safety_tick(const safety_config *cfg) {
   const uint8_t MAX_MISSED_MSGS = 10U;
   bool rx_checks_invalid = false;
   uint32_t ts = microsecond_timer_get();
-  for (int i=0; i < current_safety_config.rx_checks_len; i++) {
-    uint32_t elapsed_time = safety_get_ts_elapsed(ts, current_safety_config.rx_checks[i].status.last_timestamp);
-    // lag threshold is max of: 1s and MAX_MISSED_MSGS * expected timestep.
-    // Quite conservative to not risk false triggers.
-    // 2s of lag is worse case, since the function is called at 1Hz
-    uint32_t frequency = current_safety_config.rx_checks[i].msg[current_safety_config.rx_checks[i].status.index].frequency;
-    uint32_t timestep = 1e6 / frequency;
-    bool lagging = elapsed_time > SAFETY_MAX(timestep * MAX_MISSED_MSGS, 1e6);
-    current_safety_config.rx_checks[i].status.lagging = lagging;
+  if (cfg != NULL) {
+    for (int i=0; i < cfg->rx_checks_len; i++) {
+      uint32_t elapsed_time = safety_get_ts_elapsed(ts, cfg->rx_checks[i].status.last_timestamp);
+      // lag threshold is max of: 1s and MAX_MISSED_MSGS * expected timestep.
+      // Quite conservative to not risk false triggers.
+      // 2s of lag is worse case, since the function is called at 1Hz
+      uint32_t frequency = cfg->rx_checks[i].msg[cfg->rx_checks[i].status.index].frequency;
+      uint32_t timestep = 1e6 / frequency;
+      bool lagging = elapsed_time > SAFETY_MAX(timestep * MAX_MISSED_MSGS, 1e6);
+      cfg->rx_checks[i].status.lagging = lagging;
+      if (lagging) {
+        controls_allowed = false;
+      }
 
-    // enforce minimum frequency for safety-relevant messages
-    bool frequency_invalid = frequency < 10U;
-    if (lagging || frequency_invalid || !is_msg_valid(current_safety_config.rx_checks, i)) {
-      rx_checks_invalid = true;
-      controls_allowed = false;
+      // enforce minimum frequency for safety-relevant messages
+      bool frequency_invalid = frequency < 10U;
+      if (lagging || frequency_invalid || !is_msg_valid(cfg->rx_checks, i)) {
+        rx_checks_invalid = true;
+        controls_allowed = false;
+      }
     }
   }
 
@@ -350,7 +353,7 @@ static void generic_rx_checks(void) {
   gas_pressed_prev = gas_pressed;
 
   // exit controls on rising edge of brake press
-  if (brake_pressed && (!brake_pressed_prev || vehicle_moving)) {
+  if (brake_pressed && (!brake_pressed_prev || vehicle_moving) && !(alternative_experience & ALT_EXP_DISABLE_DISENGAGE_ON_BRAKE)) {
     controls_allowed = false;
   }
   brake_pressed_prev = brake_pressed;

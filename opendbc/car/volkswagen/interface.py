@@ -3,7 +3,7 @@ from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.volkswagen.carcontroller import CarController
 from opendbc.car.volkswagen.carstate import CarState
 from opendbc.car.volkswagen.radar_interface import RadarInterface
-from opendbc.car.volkswagen.values import CanBus, CAR, DBC, NetworkLocation, TransmissionType, VolkswagenFlags, VolkswagenSafetyFlags
+from opendbc.car.volkswagen.values import CanBus, CAR, CarControllerParams, DBC, NetworkLocation, TransmissionType, VolkswagenFlags, VolkswagenSafetyFlags
 
 class CarInterface(CarInterfaceBase):
   CarState = CarState
@@ -12,6 +12,11 @@ class CarInterface(CarInterfaceBase):
 
   DRIVABLE_GEARS = (structs.CarState.GearShifter.eco, structs.CarState.GearShifter.sport,
                     structs.CarState.GearShifter.manumatic)
+
+  @staticmethod
+  def get_pid_accel_limits(CP, current_speed, cruise_speed):
+    accel_min = CarControllerParams.MLB_ACCEL_MIN if CP.flags & VolkswagenFlags.MLB else CarControllerParams.ACCEL_MIN
+    return accel_min, CarControllerParams.ACCEL_MAX
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate: CAR, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
@@ -41,6 +46,7 @@ class CarInterface(CarInterfaceBase):
       ret.enableBsm = 0x30F in fingerprint[0]  # SWA_01
       ret.networkLocation = NetworkLocation.gateway
       ret.dashcamOnly = is_release  # Release support needs HCA timeout fix, safety validation, revised J533 harness
+      ret.longitudinalActuatorDelay = 0.2  # B8PA: ESP 8plus hydraulic brake response (no online estimator exists for longitudinal)
 
     elif ret.flags & VolkswagenFlags.MEB:
       # Set global MEB parameters
@@ -101,7 +107,7 @@ class CarInterface(CarInterfaceBase):
 
     ret.steerLimitTimer = 0.4
     if ret.flags & VolkswagenFlags.PQ or ret.flags & VolkswagenFlags.MLB:
-      ret.steerActuatorDelay = 0.2
+      ret.steerActuatorDelay = 0.2  # B8PA revert: 回到 oscarmcnulty 占位 0.2（lagd 在线估计 0.4s 但 validBlocks=0 unestimated，无法用）
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
     elif ret.flags & VolkswagenFlags.MEB:
       ret.steerActuatorDelay = 0.3

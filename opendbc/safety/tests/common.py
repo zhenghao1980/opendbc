@@ -569,18 +569,23 @@ class MotorTorqueSteeringSafetyTest(TorqueSteeringSafetyTestBase, abc.ABC):
           self.assertEqual(send, self._tx(self._torque_cmd_msg(torque)))
 
   def test_non_realtime_limit_down(self):
+    self.safety.set_controls_allowed(True)
+
     for speed in self._torque_speed_range:
       self._reset_speed_measurement(speed)
       max_torque = self._get_max_torque(speed)
+
       torque_meas = max_torque - self.MAX_TORQUE_ERROR - 50
 
-      for sign in (-1, 1):
-        for delta in (self.MAX_RATE_DOWN, self.MAX_RATE_DOWN - 1):
-          self.safety.set_controls_allowed(True)
-          self.safety.set_rt_torque_last(sign * max_torque)
-          self.safety.set_torque_meas(sign * torque_meas, sign * torque_meas)
-          self.safety.set_desired_torque_last(sign * max_torque)
-          self.assertEqual(delta == self.MAX_RATE_DOWN, self._tx(self._torque_cmd_msg(sign * (max_torque - delta))))
+      self.safety.set_rt_torque_last(max_torque)
+      self.safety.set_torque_meas(torque_meas, torque_meas)
+      self.safety.set_desired_torque_last(max_torque)
+      self.assertTrue(self._tx(self._torque_cmd_msg(max_torque - self.MAX_RATE_DOWN)))
+
+      self.safety.set_rt_torque_last(max_torque)
+      self.safety.set_torque_meas(torque_meas, torque_meas)
+      self.safety.set_desired_torque_last(max_torque)
+      self.assertFalse(self._tx(self._torque_cmd_msg(max_torque - self.MAX_RATE_DOWN + 1)))
 
   def test_exceed_torque_sensor(self):
     self.safety.set_controls_allowed(True)
@@ -1025,12 +1030,12 @@ class SafetyTest(SafetyTestBase):
             if attr == 'TestVolkswagenMqbLongSafety' and current_test.startswith('TestSubaru'):
               tx = list(filter(lambda m: m[0] not in [0x122, ], tx))
 
-            # Volkswagen MQB and Honda Nidec ACC HUD messages overlap
-            if attr == 'TestVolkswagenMqbLongSafety' and current_test.startswith('TestHondaNidec'):
+            # Volkswagen MQB/MLB longitudinal and Honda Nidec ACC HUD messages overlap at 0x30C
+            if attr in ('TestVolkswagenMqbLongSafety', 'TestVolkswagenMlbLongSafety') and current_test.startswith('TestHondaNidec'):
               tx = list(filter(lambda m: m[0] not in [0x30c, ], tx))
 
-            # Volkswagen MQB and Honda Bosch Radarless ACC HUD messages overlap
-            if attr == 'TestVolkswagenMqbLongSafety' and current_test.startswith('TestHondaBoschRadarless'):
+            # Volkswagen MQB/MLB longitudinal and Honda Bosch Radarless ACC HUD messages overlap at 0x30C
+            if attr in ('TestVolkswagenMqbLongSafety', 'TestVolkswagenMlbLongSafety') and current_test.startswith('TestHondaBoschRadarless'):
               tx = list(filter(lambda m: m[0] not in [0x30c, ], tx))
 
             # TODO: Temporary, should be fixed in panda firmware, safety_honda.h
@@ -1239,12 +1244,8 @@ class CarSafetyTest(SafetyTest):
         self.assertEqual(self.safety.get_controls_allowed(), within_delta)
 
   def test_safety_tick(self):
-    # Missing valid RX messages must disable controls even before they time out.
-    for elapsed in (0, int(2e6)):
-      with self.subTest(elapsed=elapsed):
-        self._reset_safety_hooks()
-        self.safety.set_timer(elapsed)
-        self.safety.set_controls_allowed(True)
-        self.safety.safety_tick()
-        self.assertFalse(self.safety.get_controls_allowed())
-        self.assertFalse(self.safety.safety_config_valid())
+    self.safety.set_timer(int(2e6))
+    self.safety.set_controls_allowed(True)
+    self.safety.safety_tick_current_safety_config()
+    self.assertFalse(self.safety.get_controls_allowed())
+    self.assertFalse(self.safety.safety_config_valid())

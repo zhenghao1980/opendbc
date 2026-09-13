@@ -3,10 +3,9 @@
 #include "opendbc/safety/declarations.h"
 
 static void body_rx_hook(const CANPacket_t *msg) {
-  SAFETY_UNUSED(msg);
-
-  // controls allowed as soon as RX is valid
-  controls_allowed = true;
+  if (msg->addr == 0x201U) {
+    controls_allowed = true;
+  }
 }
 
 static bool body_tx_hook(const CANPacket_t *msg) {
@@ -18,7 +17,7 @@ static bool body_tx_hook(const CANPacket_t *msg) {
 
   // Allow going into CAN flashing mode even if controls are not allowed
   bool flash_msg = (msg->addr == 0x250U) && (GET_LEN(msg) == 8U);
-  if (!controls_allowed && flash_msg && (GET_BYTES_64(msg, 0, 8) == 0x0AB00B1EDEADFACEULL)) {
+  if (!controls_allowed && (GET_BYTES(msg, 0, 4) == 0xdeadfaceU) && (GET_BYTES(msg, 4, 4) == 0x0ab00b1eU) && flash_msg) {
     tx = true;
   }
 
