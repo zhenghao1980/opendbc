@@ -67,8 +67,16 @@ class CarControllerParams:
   DEFAULT_MIN_STEER_SPEED = 0.4            # m/s, newer EPS racks fault below this speed, don't show a low speed alert
 
   ACCEL_MAX = 2.0                          # 2.0 m/s^2 max acceleration
-  ACCEL_MIN = -3.5                         # 3.5 m/s^2 max deceleration
-  MLB_ACCEL_MIN = -2.95                    # m/s^2; revert B8PA -3.5 (rlog 6c-17 实际只撞到 -3.25，-2.95 钳位已足够；原 -3.0 trips 注释保留保守余量)
+  ACCEL_MIN = -3.5                         # 3.5 m/s^2 max deceleration, standard MLB
+                                           # value (the earlier -2.95 derate guarded
+                                           # against TSK/ACC permanent faults that
+                                           # actually came from ACC regulation
+                                           # overlapping stock ANB intervention; with
+                                           # ANB backoff in place the derate is gone).
+                                           # Must stay in sync with
+                                           # VOLKSWAGEN_MLB_LONG_LIMITS.min_accel in
+                                           # safety/modes/volkswagen_mlb.h — separate
+                                           # binaries, test_volkswagen_mlb.py guards.
 
   def __init__(self, CP):
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
@@ -144,7 +152,6 @@ class CarControllerParams:
       self.hca_status_values = can_define.dv["LH_EPS_03"]["EPS_HCA_Status"]
 
       if CP.flags & VolkswagenFlags.MLB:
-        self.ACCEL_MIN = self.MLB_ACCEL_MIN
         self.STEER_DRIVER_ALLOWANCE = 60  # Driver intervention threshold 0.6 Nm
         self.STEER_DELTA_UP = 9  # Max HCA reached in 0.66s (STEER_MAX / (50Hz * 0.66))
         self.STEER_DELTA_DOWN = 10  # Min HCA reached in 0.60s (STEER_MAX / (50Hz * 0.60))

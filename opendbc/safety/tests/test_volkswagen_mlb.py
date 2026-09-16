@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import unittest
+import pathlib
+import re
 import numpy as np
 from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
@@ -8,7 +10,11 @@ from opendbc.safety.tests.common import CANPackerSafety
 from opendbc.car.volkswagen.values import VolkswagenSafetyFlags
 
 MAX_ACCEL = 2.0
-MIN_ACCEL = -2.95
+# Mirror of CarControllerParams.ACCEL_MIN (Python, host side) and of
+# VOLKSWAGEN_MLB_LONG_LIMITS.min_accel in safety/modes/volkswagen_mlb.h
+# (C, panda firmware). Three copies exist because they are separate binaries;
+# test_accel_limit_matches_safety_header below guards them from drifting.
+MIN_ACCEL = -3.5
 
 MSG_ACC_01 = 0x109      # TX by OP, longitudinal drivetrain control
 MSG_ACC_02 = 0x30C      # TX by OP, ACC HUD data to the instrument cluster
@@ -267,6 +273,57 @@ class TestVolkswagenMlbLongSafety(TestVolkswagenMlbSafetyBase):
         self.safety.set_controls_allowed(controls_allowed)
         send = controls_allowed or acc_status not in (ACC_AKTIV_REGELT, ACC_OVERRIDE)
         self.assertEqual(send, self._tx(self._acc_01_msg(0, acc_status=acc_status)), (controls_allowed, acc_status))
+
+  # Stock ANB (AEB) intervention, from the radar's ACC_10 on bus 2
+  def _acc_10_msg(self, anb_cm=0, teilbremsung=0, zielbremsung=0):
+    values = {"ANB_CM_Anforderung": anb_cm, "ANB_Teilbremsung_Freigabe": teilbremsung,
+              "ANB_Zielbremsung_Freigabe": zielbremsung}
+    return self.packer.make_can_msg_safety("ACC_10", 2, values)
+
+  def test_accel_limit_matches_safety_header(self):
+    # The host-side limit (CarControllerParams.ACCEL_MIN) and the panda safety
+    # limit (VOLKSWAGEN_MLB_LONG_LIMITS.min_accel, C firmware) are separate
+    # binaries and cannot share a constant; this test guards the two copies
+    # from drifting apart. If you change one, change the other.
+    from opendbc.car.volkswagen.values import CarControllerParams
+    header = pathlib.Path(__file__).resolve().parents[1] / "modes" / "volkswagen_mlb.h"
+    text = header.read_text(encoding="utf-8")
+    m = re.search(r"VOLKSWAGEN_MLB_LONG_LIMITS\s*=\s*\{[^}]*?\.min_accel\s*=\s*(-?\d+)", text, re.S)
+    self.assertIsNotNone(m, "min_accel not found in volkswagen_mlb.h")
+    self.assertEqual(int(m.group(1)), int(MIN_ACCEL * 1000))
+    self.assertAlmostEqual(CarControllerParams.ACCEL_MIN, MIN_ACCEL)
+
+  def test_anb_blocks_acc_regulation(self):    # While stock ANB is intervening, ACC_01 must not claim ACC regulation:
+    # the ESP AWV consistency monitor permanently faults TSK/ACC on overlap.
+    # Standby frames stay allowed so the drivetrain frame remains valid.
+    self.safety.set_controls_allowed(1)
+
+    # no ANB: regulation allowed
+    self._rx(self._acc_10_msg())
+    self.assertTrue(self._tx(self._acc_01_msg(0, acc_status=ACC_AKTIV_REGELT)))
+
+    # ANB active: active and override statuses blocked, standby allowed
+    self._rx(self._acc_10_msg(zielbremsung=1))
+    self.assertFalse(self._tx(self._acc_01_msg(0, acc_status=ACC_AKTIV_REGELT)))
+    self.assertFalse(self._tx(self._acc_01_msg(0, acc_status=ACC_OVERRIDE)))
+    self.assertTrue(self._tx(self._acc_01_msg(0, acc_status=2)))
+
+    # release-side hold: still blocked right after the release bits drop
+    self._rx(self._acc_10_msg())
+    self.assertFalse(self._tx(self._acc_01_msg(0, acc_status=ACC_AKTIV_REGELT)))
+
+    # any ANB request bit triggers the hold
+    self._rx(self._acc_10_msg(anb_cm=1))
+    self._rx(self._acc_10_msg())
+    self.assertFalse(self._tx(self._acc_01_msg(0, acc_status=ACC_AKTIV_REGELT)))
+    self._rx(self._acc_10_msg(teilbremsung=1))
+    self._rx(self._acc_10_msg())
+    self.assertFalse(self._tx(self._acc_01_msg(0, acc_status=ACC_AKTIV_REGELT)))
+
+    # after the hold expires (25 frames at 50Hz), regulation is allowed again
+    for _ in range(25):
+      self._rx(self._acc_10_msg())
+    self.assertTrue(self._tx(self._acc_01_msg(0, acc_status=ACC_AKTIV_REGELT)))
 
 
 if __name__ == "__main__":

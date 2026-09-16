@@ -11,10 +11,16 @@ ButtonType = structs.CarState.ButtonEvent.Type
 class CarState(CarStateBase):
   MLB_EPS_TIMER_MAX = 360.   # Maximum EPS engagement time before lockout will reject requests (sec)
   MLB_EPS_TIMER_WARNING = 5. # How long before lockout should we warn the driver (sec)
+  # Recovery-side hold after stock ANB (AEB) release. ANB braking is pulsed, so
+  # the release bits chatter; ACC regulation must not re-enter until ANB has
+  # been cleanly absent for this long. Starting value, tune against rlog ANB
+  # episode durations and the TSK long-control-inhibit window.
+  MLB_ANB_HOLD_TIME = 0.5    # seconds
 
   def __init__(self, CP):
     super().__init__(CP)
     self.frame = 0
+    self.anb_hold_frames = 0
     self.eps_init_complete = False
     self.eps_init_ready_frames = 0
     self.hca_active_frames = 0
@@ -362,6 +368,27 @@ class CarState(CarStateBase):
     # (red P) only happens on door/seatbelt/engine-off events, not on a timer.
     self.esp_hold_confirmation = bool(pt_cp.vl["ESP_05"]["ESP_Autohold_aktiv"])
 
+    # Stock Front Assist / ANB (autonomous emergency braking) status from the J428
+    # radar's ACC_10 (0x117) message, seen on the ext (radar-side) bus. While ANB
+    # requests braking, the ESP AWV consistency monitor counts "ACC regulating +
+    # ANB intervening" overlap and permanently faults TSK/ACC past a threshold
+    # (ignition cycle to clear), so carcontroller must exit ACC regulation and
+    # panda blocks active ACC_01 frames for as long as this is set.
+    # Trigger: rising edge reacts immediately. Release: hold stockAeb for
+    # MLB_ANB_HOLD_TIME — ANB braking is pulsed (partial braking release bits
+    # chatter) and the monitor's counting window trails the release bits, so
+    # regulation must not re-enter the moment the bits first drop.
+    anb_active = any(ext_cp.vl["ACC_10"][s] for s in (
+      "ANB_CM_Anforderung",         # collision mitigation request
+      "ANB_Teilbremsung_Freigabe",  # partial (staged) braking release
+      "ANB_Zielbremsung_Freigabe",  # target (full) braking release
+    ))
+    if anb_active:
+      self.anb_hold_frames = int(self.MLB_ANB_HOLD_TIME / DT_CTRL)
+    if anb_active or self.anb_hold_frames > 0:
+      ret.stockAeb = True
+      self.anb_hold_frames = max(0, self.anb_hold_frames - 1)
+
     ret.leftBlinker = bool(pt_cp.vl["BCM"]["BLINKER_LEFT"])
     ret.rightBlinker = bool(pt_cp.vl["BCM"]["BLINKER_RIGHT"])
 
@@ -459,6 +486,13 @@ class CarState(CarStateBase):
     if CP.flags & VolkswagenFlags.STOCK_HCA_PRESENT:
       cam_messages += [
         ("HCA_01", 1),  # From R242 Driver assistance camera, 50Hz if steering/1Hz if not
+      ]
+    if CP.flags & VolkswagenFlags.MLB:
+      cam_messages += [
+        ("ACC_10", 50),  # From J428 ACC radar (0x117): ANB (AEB) braking requests.
+                         # Needed to back off ACC regulation while stock emergency
+                         # braking intervenes; the ESP AWV consistency monitor
+                         # permanently faults TSK/ACC on prolonged overlap.
       ]
 
     return {

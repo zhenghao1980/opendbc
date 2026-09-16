@@ -15,8 +15,9 @@ class CarInterface(CarInterfaceBase):
 
   @staticmethod
   def get_pid_accel_limits(CP, current_speed, cruise_speed):
-    accel_min = CarControllerParams.MLB_ACCEL_MIN if CP.flags & VolkswagenFlags.MLB else CarControllerParams.ACCEL_MIN
-    return accel_min, CarControllerParams.ACCEL_MAX
+    # MLB uses the standard ACCEL_MIN: the earlier -2.95 derate was an ANB-overlap
+    # workaround, removed now that ANB backoff exists (see values.py ACCEL_MIN).
+    return CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate: CAR, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:

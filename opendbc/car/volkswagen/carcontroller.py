@@ -221,11 +221,22 @@ class CarController(CarControllerBase):
             # the ACC display ~2s into the override. accel/limits stay gated by
             # CC.longActive below — only the status value reflects the override.
             acc_long_active = CC.longActive or self.acc_gas_override
+            # ANB (stock AEB) active: exit ACC regulation entirely until the ANB
+            # cooldown in carState.stockAeb expires. The ESP AWV consistency
+            # monitor counts ACC-regulating + ANB-intervening overlap and
+            # permanently faults TSK/ACC past a threshold, so standby (accel
+            # zeroed below, main switch stays on) is the only safe claim.
+            # Lateral is unaffected. panda additionally blocks any active
+            # ACC_01 frames during this window as a backstop.
+            acc_long_active = acc_long_active and not CS.out.stockAeb
             acc_control = 4 if (acc_long_active and CS.out.gasPressed) else \
                           self.CCS.acc_control_value(CS.out.cruiseState.available, CS.out.accFaulted, acc_long_active)
-          accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX) if CC.longActive else 0)
-          starting = actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or CS.out.vEgo < 0.25)
-          can_sends.extend(self.CCS.create_acc_accel_control(self.packer_pt, self.CAN.pt, CS.acc_type, CC.longActive, accel,
+          mlb_anb_hold = self.CP.flags & VolkswagenFlags.MLB and CS.out.stockAeb
+          accel_active = CC.longActive and not mlb_anb_hold
+          accel = float(np.clip(actuators.accel, self.CCP.ACCEL_MIN, self.CCP.ACCEL_MAX) if accel_active else 0)
+          stopping = stopping and accel_active
+          starting = accel_active and actuators.longControlState == LongCtrlState.pid and (CS.esp_hold_confirmation or CS.out.vEgo < 0.25)
+          can_sends.extend(self.CCS.create_acc_accel_control(self.packer_pt, self.CAN.pt, CS.acc_type, accel_active, accel,
                                                              acc_control, stopping, starting, CS.esp_hold_confirmation))
 
         self.accel_last = accel
@@ -280,7 +291,9 @@ class CarController(CarControllerBase):
           # controlsd drops CC.longActive while overrideLongitudinal is present; using it
           # directly makes the HUD fall to Status=2 (standby) for the whole override, so
           # the Kombi hides the graphic ~2s later and never redraws it (no arm sequence).
-          hud_long_active = CC.longActive or self.acc_gas_override
+          # During ANB (stockAeb) the HUD follows ACC_01 to standby: showing "active"
+          # while the drivetrain frame claims standby would desync the Kombi state.
+          hud_long_active = (CC.longActive or self.acc_gas_override) and not CS.out.stockAeb
           acc_hud_status = self.CCS.acc_hud_status_value(CS.out.cruiseState.available, CS.out.accFaulted,
                                                          hud_long_active, gas_pressed=CS.out.gasPressed)
         else:

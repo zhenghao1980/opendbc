@@ -7,6 +7,17 @@
 #define VOLKSWAGEN_MLB_ACC_AKTIV_REGELT        3U
 #define VOLKSWAGEN_MLB_ACC_OVERRIDE            4U
 
+// Stock ANB (autonomous emergency braking) intervention state, tracked from
+// the radar's ACC_10 (0x117) message. While ANB requests braking, openpilot
+// must not claim ACC regulation: the ESP AWV consistency monitor counts
+// "ACC regulating + ANB intervening" overlap and permanently faults TSK/ACC
+// past a threshold (requires ignition cycle to clear).
+static bool volkswagen_mlb_stock_anb = false;
+// Recovery-side hold after ANB release: ANB braking is pulsed, so the release
+// bits chatter and the monitor's window trails them. 0.5s at ACC_10's 50Hz.
+#define VOLKSWAGEN_MLB_ANB_HOLD_STEPS          25U
+static uint8_t volkswagen_mlb_anb_hold = 0U;
+
 static uint32_t volkswagen_mlb_compute_checksum(const CANPacket_t *msg) {
   // XOR checksum seeded with the CAN address high byte XOR low byte, except LH_EPS_03 which uses the CRC8H2F MQB/MEB checksum.
   // This only covers messages used in safety. Full reference python implementation is in opendbc/car/volkswagen/
@@ -54,6 +65,9 @@ static safety_config volkswagen_mlb_init(uint16_t param) {
 #else
   SAFETY_UNUSED(param);
 #endif
+
+  volkswagen_mlb_stock_anb = false;
+  volkswagen_mlb_anb_hold = 0U;
 
   return volkswagen_longitudinal ? BUILD_SAFETY_CFG(volkswagen_mlb_rx_checks, VOLKSWAGEN_MLB_LONG_TX_MSGS) : \
                                    BUILD_SAFETY_CFG(volkswagen_mlb_rx_checks, VOLKSWAGEN_MLB_STOCK_TX_MSGS);
@@ -144,6 +158,24 @@ static void volkswagen_mlb_rx_hook(const CANPacket_t *msg) {
       }
     }
   }
+
+  if (msg->bus == 2U) {
+    if (msg->addr == MSG_ACC_10) {
+      // ANB intervention request bits, reacted on immediately (rising edge):
+      // Signal: ACC_10.ANB_CM_Anforderung (bit 25), collision mitigation request
+      // Signal: ACC_10.ANB_Teilbremsung_Freigabe (bit 28), partial braking release
+      // Signal: ACC_10.ANB_Zielbremsung_Freigabe (bit 39), target braking release
+      // On release, hold for a cooldown so pulsed partial braking and the
+      // monitor's trailing window can't let an active ACC_01 slip back in.
+      bool anb_active = GET_BIT(msg, 25U) || GET_BIT(msg, 28U) || GET_BIT(msg, 39U);
+      if (anb_active) {
+        volkswagen_mlb_anb_hold = VOLKSWAGEN_MLB_ANB_HOLD_STEPS;
+      } else if (volkswagen_mlb_anb_hold > 0U) {
+        volkswagen_mlb_anb_hold--;
+      }
+      volkswagen_mlb_stock_anb = anb_active || (volkswagen_mlb_anb_hold > 0U);
+    }
+  }
 }
 
 static bool volkswagen_mlb_tx_hook(const CANPacket_t *msg) {
@@ -160,10 +192,15 @@ static bool volkswagen_mlb_tx_hook(const CANPacket_t *msg) {
 
   // longitudinal limits
   // acceleration in m/s2 * 1000 to avoid floating point math
-  // Braking limited to -2.95m/s^2: -3.0 faults the 2014 Audi Q5 ACC ECU (requires ignition cycle to clear)
+  // Standard MLB limit, same as MQB/PQ/MEB and the global default: the ACC
+  // channel itself handles -3.5. The earlier -2.95 derate was a mitigation
+  // for TSK/ACC permanent faults that actually stem from ACC regulation
+  // overlapping stock ANB (AEB) intervention; with ANB backoff in place
+  // (rx_hook tracks ACC_10, active ACC_01 frames are blocked while ANB
+  // intervenes), the derate is no longer needed.
   const LongitudinalLimits VOLKSWAGEN_MLB_LONG_LIMITS = {
     .max_accel = 2000,
-    .min_accel = -2950,
+    .min_accel = -3500,
     .inactive_accel = 0,
   };
 
@@ -197,6 +234,11 @@ static bool volkswagen_mlb_tx_hook(const CANPacket_t *msg) {
     bool acc_status_active = (acc_status == VOLKSWAGEN_MLB_ACC_AKTIV_REGELT) ||
                              (acc_status == VOLKSWAGEN_MLB_ACC_OVERRIDE);
     violation |= acc_status_active && !controls_allowed;
+
+    // While stock ANB (AEB) is intervening, block any frame that claims ACC
+    // regulation: the ESP AWV consistency monitor faults TSK/ACC on overlap.
+    // Standby/fault statuses stay allowed so the drivetrain frame stays valid.
+    violation |= acc_status_active && volkswagen_mlb_stock_anb;
 
     if (violation) {
       tx = false;
