@@ -47,7 +47,13 @@ class CarInterface(CarInterfaceBase):
       ret.enableBsm = 0x30F in fingerprint[0]  # SWA_01
       ret.networkLocation = NetworkLocation.gateway
       ret.dashcamOnly = is_release  # Release support needs HCA timeout fix, safety validation, revised J533 harness
-      ret.longitudinalActuatorDelay = 0.2  # B8PA: ESP 8plus hydraulic brake response (no online estimator exists for longitudinal)
+      # B8PA: fitted from rlog data (routes 00000028/00000026/6c-17, 29 valid
+      # runs of OP ACC_01 requests vs carState.aEgo): pure dead time ~76ms,
+      # first-order hydraulic build-up tau ~0.4-0.6s, effective braking lag
+      # ~0.45s. The old 0.2s underestimated braking response. No online
+      # estimator exists for longitudinal; revisit against nse in
+      # estimate_long_delay.py after the next drive.
+      ret.longitudinalActuatorDelay = 0.4
 
     elif ret.flags & VolkswagenFlags.MEB:
       # Set global MEB parameters
