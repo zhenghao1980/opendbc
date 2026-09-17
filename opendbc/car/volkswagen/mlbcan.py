@@ -134,13 +134,30 @@ def acc_control_value(main_switch_on, acc_faulted, long_active):
 def create_acc_accel_control(packer, bus, acc_type, acc_enabled, accel, acc_control, stopping, starting, esp_hold):
   commands = []
 
+  # OEM-style jerk envelope, reverse-engineered from factory J428 logs (65 min
+  # highway + 59 min urban, ~370k frames, oem_log_stats*.py):
+  #   not regulating          -> both grads 0 (matches st2 share exactly)
+  #   regulating, brake dir   -> neg_grad constant 3.5 across the full
+  #                              -3.0..+3.0 accel range (urban deep-brake
+  #                              samples confirm; safety: brake response is
+  #                              never self-limited)
+  #   regulating, release dir -> pos_grad scales with brake depth:
+  #                              urban fit |a|+0.6 (highway fit |a|+0.25),
+  #                              clipped to [0.6, 3.2]. Shallower = softer.
+  if acc_enabled:
+    neg_grad = 3.5
+    pos_grad = min(max(abs(accel) + 0.6, 0.6), 3.2)
+  else:
+    neg_grad = 0.0
+    pos_grad = 0.0
+
   acc_01_values = {
     "ACC_Status_ACC": acc_control,
     "ACC_Sollbeschleunigung": accel if acc_enabled else 0,
     "ACC_zul_Regelabw_unten": 0.2,
     "ACC_zul_Regelabw_oben": 0.2,
-    "ACC_neg_Sollbeschl_Grad": 4.0 if acc_enabled else 0,
-    "ACC_pos_Sollbeschl_Grad": 4.0 if acc_enabled else 0,
+    "ACC_neg_Sollbeschl_Grad": neg_grad,
+    "ACC_pos_Sollbeschl_Grad": pos_grad,
     "ACC_Anfahren": starting,
     "ACC_Anhalten": stopping,
     "ACC_Dynamik": 2,
