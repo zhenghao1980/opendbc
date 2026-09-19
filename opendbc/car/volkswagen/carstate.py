@@ -1,4 +1,5 @@
 from opendbc.can import CANParser
+from opendbc.can.parser import MAX_BAD_COUNTER
 from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.common.conversions import Conversions as CV
@@ -17,6 +18,14 @@ class CarState(CarStateBase):
   # episode durations and the TSK long-control-inhibit window.
   MLB_ANB_HOLD_TIME = 0.5    # seconds
 
+  # DEC-R health: per-message freshness thresholds from the chapter-15 spec
+  # (ACC_01 @50Hz -> 100 ms, ACC_02 @16.7Hz -> 250 ms)
+  DECR_ACC01_TIMEOUT_NS = 100_000_000
+  DECR_ACC02_TIMEOUT_NS = 250_000_000
+  # A frame-to-frame jump of J428's soll beyond this is a garbage/frozen-radar
+  # signature (it is a sample-hold staircase; legitimate steps are far smaller)
+  DECR_SOLL_RATE_MAX = 2.0  # m/s^2 per frame
+
   def __init__(self, CP):
     super().__init__(CP)
     self.frame = 0
@@ -34,6 +43,7 @@ class CarState(CarStateBase):
     # MLB ACC HUD trusts these whenever the radar reports an object.
     self.stock_acc_relevant_obj = 0
     self.stock_acc_abstandsindex = 1023
+    self._stock_acc_soll_prev = 0.
     self.upscale_lead_car_signal = False
     self.eps_stock_values = False
     self.acc_type = 0
@@ -362,6 +372,37 @@ class CarState(CarStateBase):
     ret.cruiseState.speed = ext_cp.vl["ACC_02"]["ACC_Wunschgeschw_02"] * CV.KPH_TO_MS
     self.stock_acc_relevant_obj = int(ext_cp.vl["ACC_02"]["ACC_Relevantes_Objekt"])
     self.stock_acc_abstandsindex = int(ext_cp.vl["ACC_02"]["ACC_Abstandsindex"])
+
+    # DEC-R (J428 radar deceleration fusion) inputs: the radar's own ACC_01
+    # (0x109) copy on the radar-side bus. J428 runs its full ACC stack in
+    # parallel while OP regulates; panda blocks its commands from the
+    # powertrain, so this is a passive observation tap feeding controlsd's
+    # DEC-R controller (spec: op-model-outputs.html ch. 15). vl[] access
+    # auto-registers the message on this parser; per-message freshness below
+    # uses the chapter-15 timeouts (ACC_01 100 ms, ACC_02 250 ms) instead of
+    # the default 10 s assumed-frequency grace.
+    acc01 = ext_cp.vl["ACC_01"]
+    ret.stockAccSoll = float(acc01["ACC_Sollbeschleunigung"])
+    ret.stockAccNegGrad = float(acc01["ACC_neg_Sollbeschl_Grad"])
+    ret.stockAccPosGrad = float(acc01["ACC_pos_Sollbeschl_Grad"])
+    ret.stockAccStatus = int(acc01["ACC_Status_ACC"])
+    ret.stockAccRelevantObj = self.stock_acc_relevant_obj
+    ret.stockAccAbstandsindex = self.stock_acc_abstandsindex
+
+    # Health: freshness of both messages against the spec timeouts, parser
+    # counter continuity, and a soll rate-of-change limit (frozen/garbage
+    # radar). Any failure -> stockAccHealthy False -> DEC-R silently degrades.
+    now_nanos = ext_cp.last_nonempty_nanos
+    acc01_ts = ext_cp.ts_nanos["ACC_01"]["ACC_Sollbeschleunigung"]
+    acc02_ts = ext_cp.ts_nanos["ACC_02"]["ACC_Abstandsindex"]
+    acc01_fresh = 0 < acc01_ts and (now_nanos - acc01_ts) <= self.DECR_ACC01_TIMEOUT_NS
+    acc02_fresh = 0 < acc02_ts and (now_nanos - acc02_ts) <= self.DECR_ACC02_TIMEOUT_NS
+    counters_ok = all(ext_cp.message_states[a].counter_fail < MAX_BAD_COUNTER
+                      for a in (0x109, 0x30C) if a in ext_cp.message_states)
+    soll_step = abs(ret.stockAccSoll - self._stock_acc_soll_prev)
+    if acc01_fresh and acc01_ts > 0:
+      self._stock_acc_soll_prev = ret.stockAccSoll
+    ret.stockAccHealthy = bool(acc01_fresh and acc02_fresh and counters_ok and soll_step <= self.DECR_SOLL_RATE_MAX)
 
     self.parse_mlb_mqb_steering_state(ret, pt_cp)
 

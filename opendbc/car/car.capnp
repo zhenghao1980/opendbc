@@ -206,6 +206,17 @@ struct CarState {
   carNotReady @61 :Bool;  # car is transiently refusing engagement, used to prevent a fault if engaged
   steerTimeLimit @62 :Bool;  # steering will soon be refused; inferred from time spent steering, not reported by the car
 
+  # DEC-R (stock radar deceleration fusion) inputs, populated on VW MLB only:
+  # the J428 radar's own ACC_01/ACC_02 observed on the radar-side bus. See
+  # openpilot/selfdrive/controls/lib/decr (spec: op-model-outputs.html ch. 15).
+  stockAccSoll @63 :Float32;           # ACC_Sollbeschleunigung [m/s^2], J428's full longitudinal request
+  stockAccNegGrad @64 :Float32;        # ACC_neg_Sollbeschl_Grad [m/s^3], OEM brake-direction jerk envelope
+  stockAccPosGrad @65 :Float32;        # ACC_pos_Sollbeschl_Grad [m/s^3], OEM release-direction jerk envelope
+  stockAccStatus @66 :Int8;            # ACC_Status_ACC state machine value
+  stockAccRelevantObj @67 :Int8;       # ACC_02 ACC_Relevantes_Objekt (0/1/2 = none/green/red)
+  stockAccAbstandsindex @68 :UInt16;   # ACC_02 ACC_Abstandsindex (1022/1023 = no target)
+  stockAccHealthy @69 :Bool;           # radar feed health: freshness (100/250 ms) + counter + rate limit
+
   # cruise state
   cruiseState @10 :CruiseState;
 

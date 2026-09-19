@@ -144,6 +144,8 @@ def create_acc_accel_control(packer, bus, acc_type, acc_enabled, accel, acc_cont
   #   regulating, release dir -> pos_grad scales with brake depth:
   #                              urban fit |a|+0.6 (highway fit |a|+0.25),
   #                              clipped to [0.6, 3.2]. Shallower = softer.
+  # 非调节→双 0 对应 J428 standby 语义,OP 侧以 acc_enabled 为调节判据
+  # (OP 作为虚拟 J428 发送 ACC_01,acc_enabled 即自身的调节状态)。
   if acc_enabled:
     neg_grad = 3.5
     pos_grad = min(max(abs(accel) + 0.6, 0.6), 3.2)
