@@ -340,7 +340,8 @@ class CarController(CarControllerBase):
                                                            announcing=self.frame <= self.texte_timer,
                                                            display_armed=display_armed,
                                                            stock_relevant_obj=CS.stock_acc_relevant_obj,
-                                                           stock_abstandsindex=CS.stock_acc_abstandsindex))
+                                                           stock_abstandsindex=CS.stock_acc_abstandsindex,
+                                                           v_ego_kph=CS.out.vEgo * CV.MS_TO_KPH))
         else:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            lead_distance, hud_control.leadDistanceBars))

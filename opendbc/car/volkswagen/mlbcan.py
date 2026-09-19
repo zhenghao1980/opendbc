@@ -1,3 +1,5 @@
+from bisect import bisect_right
+
 from opendbc.car.crc import CRC8H2F
 from opendbc.car.volkswagen.mqbcan import volkswagen_mqb_meb_checksum, xor_checksum
 
@@ -185,31 +187,59 @@ def acc_hud_status_value(main_switch_on, acc_faulted, long_active, gas_pressed=F
 
 
 # B8 Kombi distance-bar display index (ACC_Abstandsindex) is a non-linear display index, not meters.
-# Calibrated from 20826 stock ACC_02(0x30C, bus2) frames paired with vision lead distance
-# across 37 local rlog segments (32-91 kph, gap settings 4/5; acc_fusion/fit_dataset.jsonl).
-# (lead distance m, 2m-bin median abidx). Bucket medians are monotonic; bucket spacing
-# is NOT uniform (piecewise-linear interpolation between anchors). No reliable stock data
-# below 22m or above 114m — clamped at both ends.
-_ABSTANDSINDEX_LUT = (
-  (22.0, 567), (27.0, 532), (32.0, 507), (37.0, 488), (42.0, 459), (47.0, 422),
-  (52.0, 414), (57.0, 381), (62.0, 355), (67.0, 326), (72.0, 301), (77.0, 284),
-  (82.0, 275), (87.0, 244), (92.0, 234), (97.0, 200), (102.0, 161), (107.0, 130),
-  (115.0, 130),
+# 2D table over (ego speed, lead distance): the stock J428 index is a composite of both
+# (approx. headway-like), which a distance-only LUT cannot reproduce (CV R2 0.669 -> 0.884,
+# MAE 47.7 -> 20.2 index units on 82,373 paired frames).
+# Sources: calib-20260916 (61 segs, gap 1/2) + rawdata (68 segs, gap 1) + op-acc02 rlog34;
+# ACC_02(0x30C, bus2) abidx paired with modelV2 lead x and ESP wheel speed.
+# Cell = median abidx in d+-2.5m / v+-2.5kph (n>=30); holes interpolated per speed row;
+# enforced non-increasing in d. Bilinear interpolation between anchors; clamped at edges.
+# Zeitluecke setting shown to NOT affect abidx (median residual ~0 across gap 1/2).
+_ABIDX2D_V_KPH = (15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95)
+_ABIDX2D_D_M = (10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115)
+_ABIDX2D = (
+  (594, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508),  # 15 kph
+  (594, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508, 508),  # 20 kph
+  (755, 512, 479, 439, 398, 358, 317, 277, 277, 234, 218, 170, 157, 144, 123, 99, 99, 99, 99, 99, 99, 99),        # 25 kph
+  (753, 513, 497, 454, 438, 416, 393, 371, 352, 352, 352, 300, 177, 54, 54, 54, 54, 54, 54, 54, 54, 54),         # 30 kph
+  (785, 669, 505, 449, 432, 420, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404, 404),  # 35 kph
+  (828, 662, 496, 477, 434, 431, 412, 332, 301, 301, 301, 301, 301, 301, 301, 301, 301, 301, 301, 301, 301, 301),  # 40 kph
+  (686, 686, 511, 484, 449, 426, 409, 409, 409, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282, 282),  # 45 kph
+  (796, 796, 613, 495, 463, 445, 425, 425, 425, 425, 425, 425, 425, 425, 425, 425, 425, 425, 425, 425, 425, 425),  # 50 kph
+  (816, 816, 622, 510, 476, 451, 430, 408, 399, 384, 377, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372, 372),  # 55 kph
+  (802, 802, 694, 528, 481, 452, 425, 419, 399, 399, 335, 326, 263, 263, 263, 263, 251, 251, 232, 213, 213, 213),  # 60 kph
+  (788, 788, 653, 525, 484, 465, 449, 408, 399, 387, 382, 338, 240, 240, 240, 240, 240, 240, 240, 187, 187, 187),  # 65 kph
+  (760, 760, 760, 555, 505, 463, 453, 424, 390, 378, 374, 370, 370, 270, 171, 171, 162, 155, 142, 122, 122, 122),  # 70 kph
+  (770, 770, 770, 626, 510, 500, 452, 417, 395, 381, 381, 341, 330, 317, 312, 297, 282, 282, 266, 266, 266, 266),  # 75 kph
+  (631, 631, 631, 631, 509, 495, 474, 433, 417, 368, 356, 331, 296, 266, 266, 188, 146, 103, 62, 62, 62, 62),     # 80 kph
+  (508, 508, 508, 508, 508, 490, 486, 450, 422, 398, 385, 350, 324, 296, 295, 277, 260, 244, 114, 84, 68, 68),    # 85 kph
+  (422, 422, 422, 422, 422, 422, 422, 422, 422, 394, 360, 323, 290, 259, 238, 226, 222, 210, 156, 146, 126, 126), # 90 kph
+  (422, 422, 422, 422, 422, 422, 422, 422, 422, 394, 360, 323, 290, 259, 238, 226, 222, 210, 156, 146, 126, 126), # 95 kph
 )
 
 
-def _abstandsindex(lead_distance_m: float) -> int:
-  """Map lead distance in meters to the B8 cluster's non-linear ACC_Abstandsindex display index."""
-  if lead_distance_m <= _ABSTANDSINDEX_LUT[0][0]:
-    return _ABSTANDSINDEX_LUT[0][1]
-  for (d0, a0), (d1, a1) in zip(_ABSTANDSINDEX_LUT, _ABSTANDSINDEX_LUT[1:]):
-    if lead_distance_m <= d1:
-      return int(round(a0 + (a1 - a0) * (lead_distance_m - d0) / (d1 - d0)))
-  return _ABSTANDSINDEX_LUT[-1][1]
+def _abstandsindex_row_interp(row, d: float) -> float:
+  j = max(0, min(bisect_right(_ABIDX2D_D_M, d) - 1, len(_ABIDX2D_D_M) - 2))
+  d0, d1 = _ABIDX2D_D_M[j], _ABIDX2D_D_M[j + 1]
+  return row[j] + (row[j + 1] - row[j]) * (d - d0) / (d1 - d0)
+
+
+def _abstandsindex(lead_distance_m: float, v_ego_kph: float = 50.0) -> int:
+  """Map (lead distance, ego speed) to the B8 cluster's non-linear ACC_Abstandsindex display index.
+
+  Bilinear lookup over _ABIDX2D; inputs clamped to the calibrated grid
+  (10-115 m, 15-95 kph). v_ego_kph defaults to a mid-grid neutral speed."""
+  v = min(max(v_ego_kph, _ABIDX2D_V_KPH[0]), _ABIDX2D_V_KPH[-1])
+  d = min(max(lead_distance_m, _ABIDX2D_D_M[0]), _ABIDX2D_D_M[-1])
+  i = max(0, min(bisect_right(_ABIDX2D_V_KPH, v) - 1, len(_ABIDX2D_V_KPH) - 2))
+  v0, v1 = _ABIDX2D_V_KPH[i], _ABIDX2D_V_KPH[i + 1]
+  a_lo = _abstandsindex_row_interp(_ABIDX2D[i], d)
+  a_hi = _abstandsindex_row_interp(_ABIDX2D[i + 1], d)
+  return int(round(a_lo + (a_hi - a_lo) * (v - v0) / (v1 - v0)))
 
 
 def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text, announcing=False,
-                           display_armed=False, stock_relevant_obj=0, stock_abstandsindex=1023):
+                           display_armed=False, stock_relevant_obj=0, stock_abstandsindex=1023, v_ego_kph=50.0):
 
   acc_active = acc_hud_status in (3, 4)
   # display_armed: stock J428 pre-frames — display fields switch to the active
@@ -234,8 +264,8 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
       # 1022/1023 special displays — that IS the stock presentation.
       abstandsindex = int(stock_abstandsindex)
     else:
-      # OP-only lead: fitted index from vision distance (legacy LUT path).
-      abstandsindex = _abstandsindex(lead_distance) if lead_distance > 1.0 else (1023 if acc_display else 1022)
+      # OP-only lead: fitted index from vision distance + ego speed (2D LUT path).
+      abstandsindex = _abstandsindex(lead_distance, v_ego_kph) if lead_distance > 1.0 else (1023 if acc_display else 1022)
   else:
     abstandsindex = 1023 if acc_display else 1022
 

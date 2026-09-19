@@ -4,7 +4,7 @@ from opendbc.can.dbc import DBC
 from opendbc.can.packer import CANPacker
 from opendbc.car.volkswagen import mlbcan
 from opendbc.car.volkswagen.mlbcan import acc_control_value, acc_hud_status_value, create_acc_hud_control, \
-                                          create_lka_lamp_control, _abstandsindex, _ABSTANDSINDEX_LUT, \
+                                          create_lka_lamp_control, _abstandsindex, _ABIDX2D, _ABIDX2D_D_M, _ABIDX2D_V_KPH, \
                                           LKA_LAMP_OFF, LKA_LAMP_GREEN, LKA_LAMP_YELLOW
 
 
@@ -53,34 +53,44 @@ class TestAccHudStatusValue(unittest.TestCase):
 
 
 class TestAbstandsindexLut(unittest.TestCase):
-  """R-23 (2): distance-bar display index LUT boundaries, interpolation, clamps."""
+  """2D (v_ego, distance) Abstandsindex LUT: anchors, bilinear interpolation, clamps."""
 
   def test_lut_anchor_points_exact(self):
-    for d, want in _ABSTANDSINDEX_LUT:
-      self.assertEqual(_abstandsindex(d), want, f"anchor {d} m")
+    for i, v in enumerate(_ABIDX2D_V_KPH):
+      for j, d in enumerate(_ABIDX2D_D_M):
+        self.assertEqual(_abstandsindex(d, v), _ABIDX2D[i][j], f"anchor {v} kph / {d} m")
 
-  def test_low_clamp_below_22m(self):
-    # No reliable stock data below 22 m: clamped. Known-direction distortion
-    # (shows "22 m equivalent" when closer); fallback pending stock rlog (R-04).
-    for d in (0.0, 5.0, 21.9, 22.0):
-      self.assertEqual(_abstandsindex(d), 567, f"{d} m")
+  def test_low_clamp_below_10m(self):
+    # Grid starts at 10 m: clamped to the d=10 column (v=50 kph row -> 796)
+    for d in (0.0, 5.0, 9.9, 10.0):
+      self.assertEqual(_abstandsindex(d, 50.0), 796, f"{d} m")
 
   def test_high_clamp_above_115m(self):
     for d in (115.0, 150.0, 250.0):
-      self.assertEqual(_abstandsindex(d), 130, f"{d} m")
+      self.assertEqual(_abstandsindex(d, 50.0), 425, f"{d} m")
 
-  def test_interpolation_midpoint(self):
-    # Between (22, 567) and (27, 532): linear at 24.5 m
-    self.assertEqual(_abstandsindex(24.5), round(567 + (532 - 567) * 0.5))
+  def test_speed_clamp(self):
+    # v below/above the 15-95 kph grid clamps to the edge rows (d=35 m)
+    self.assertEqual(_abstandsindex(35.0, 0.0), _ABIDX2D[0][5])
+    self.assertEqual(_abstandsindex(35.0, 200.0), _ABIDX2D[-1][5])
+
+  def test_interpolation_distance_midpoint(self):
+    # v=50 kph row, between d=30 (463) and d=35 (445): linear at 32.5 m
+    self.assertEqual(_abstandsindex(32.5, 50.0), round(463 + (445 - 463) * 0.5))
+
+  def test_interpolation_speed_midpoint(self):
+    # d=50 m, between v=50 (425) and v=55 (399) rows at 52.5 kph
+    self.assertEqual(_abstandsindex(50.0, 52.5), round(425 + (399 - 425) * 0.5))
 
   def test_monotonic_nonincreasing(self):
-    prev = None
-    for i in range(0, 2501):
-      d = i * 0.1  # 0 .. 250 m
-      v = _abstandsindex(d)
-      if prev is not None:
-        self.assertLessEqual(v, prev, f"non-monotonic at {d:.1f} m")
-      prev = v
+    for v in (15.0, 35.0, 50.0, 70.0, 95.0):
+      prev = None
+      for i in range(0, 2501):
+        d = i * 0.1  # 0 .. 250 m
+        a = _abstandsindex(d, v)
+        if prev is not None:
+          self.assertLessEqual(a, prev, f"non-monotonic at {v} kph / {d:.1f} m")
+        prev = a
 
 
 class TestAccHudControl(unittest.TestCase):
@@ -123,8 +133,9 @@ class TestAccHudControl(unittest.TestCase):
     self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 1022)
 
   def test_abstandsindex_uses_lut_with_lead(self):
+    # default v_ego_kph=50 row: d=40 -> 425, d=45 -> 425; flat at 42 m
     addr, dat, _ = self._pack(3, lead_distance=42.0)
-    self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 459)
+    self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 425)
 
   def test_abstandsindex_subliminal_lead_distance(self):
     # lead_distance <= 1.0 m is not a real lead: special code, not the clamp
@@ -172,7 +183,7 @@ class TestLeadDisplayArbitration(unittest.TestCase):
     addr, dat, _ = self._pack(lead_distance=42.0, hud=_HudControl(lead_visible=True),
                               stock_relevant_obj=0)
     self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Relevantes_Objekt"), 1)
-    self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 459)
+    self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 425)  # 2D LUT @ (42 m, 50 kph default)
 
   def test_op_only_lead_subliminal_distance(self):
     # OP lead but distance <= 1.0 m: special display, not the LUT low clamp
@@ -205,7 +216,7 @@ class TestLeadDisplayArbitration(unittest.TestCase):
     # No stock args (e.g. radar frames not wired): identical to old behavior
     addr, dat, _ = self._pack(lead_distance=42.0)  # _HudControl default: lead visible
     self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Relevantes_Objekt"), 1)
-    self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 459)
+    self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 425)  # 2D LUT @ (42 m, 50 kph default)
     addr, dat, _ = self._pack(lead_distance=42.0, hud=_HudControl(lead_visible=False))
     self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Relevantes_Objekt"), 0)
     self.assertEqual(_get_sig("vw_mlb", addr, dat, "ACC_Abstandsindex"), 1023)
