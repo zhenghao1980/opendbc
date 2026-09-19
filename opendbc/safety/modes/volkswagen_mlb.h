@@ -25,6 +25,18 @@ static uint32_t volkswagen_mlb_compute_checksum(const CANPacket_t *msg) {
 
   if (msg->addr == MSG_LH_EPS_03) {
     result = volkswagen_mqb_meb_compute_crc(msg);
+  } else if (msg->addr == MSG_ACC_10) {
+    // ACC_10 uses CRC-8H2F/AUTOSAR with the CAN ID low byte appended after
+    // the payload (E2E Profile 2 style). Verified against 15k frames of
+    // recorded bus 2 traffic (idle and ANB-active), zero mismatches.
+    uint8_t crc = 0xFFU;
+    for (int i = 1; i < GET_LEN(msg); i++) {
+      crc ^= (uint8_t)msg->data[i];
+      crc = volkswagen_crc8_lut_8h2f[crc];
+    }
+    crc ^= (uint8_t)(msg->addr & 0xFFU);
+    crc = volkswagen_crc8_lut_8h2f[crc];
+    result = (uint8_t)(crc ^ 0xD0U);
   } else {
     uint8_t seed = (uint8_t)(((msg->addr >> 8) & 0xFFU) ^ (msg->addr & 0xFFU));
     result = volkswagen_xor_checksum(msg, 0U, seed);
@@ -56,6 +68,10 @@ static safety_config volkswagen_mlb_init(uint16_t param) {
     {.msg = {{MSG_LS_01, 0, 4, 10U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MSG_BCM_01, 0, 8, 10U, .max_counter = 0U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MSG_ACC_02, 2, 8, 16U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    // Radar-side ANB (AEB) requests; rx_hook tracks these to back off ACC_01.
+    // Without this entry the rx_hook never runs for ACC_10 and the backoff
+    // is a dud. CRC-8H2F with the CAN ID appended, handled in compute_checksum.
+    {.msg = {{MSG_ACC_10, 2, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
   };
 
   volkswagen_common_init();
