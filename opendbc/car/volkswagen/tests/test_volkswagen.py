@@ -7,6 +7,7 @@ from opendbc.car.structs import CarParams
 from opendbc.can.dbc import DBC
 from opendbc.can.packer import CANPacker
 from opendbc.car.volkswagen.carcontroller import HCAMitigation
+from opendbc.car.volkswagen import mlbcan
 from opendbc.car.volkswagen.mlbcan import LANE_KEEP_STANDSTILL_M_S, create_lka_hud_control as mlb_create_lka_hud_control, \
                                           create_lka_lamp_control, volkswagen_mlb_checksum, \
                                           LKA_LAMP_OFF, LKA_LAMP_GREEN, LKA_LAMP_YELLOW
@@ -191,6 +192,53 @@ class TestVolkswagenLkaHudControl(unittest.TestCase):
     golden = {0x9F: 102, 0x117: 97, 0x11D: 104, 0x11E: 216, 0x126: 143, 0x32A: 38, 0x397: 70, 0x100: 121, 0x101: 120}
     for addr, want in golden.items():
       self.assertEqual(volkswagen_mlb_checksum(addr, _Sig(), fixed), want, f"{hex(addr)} checksum changed")
+
+  def test_mlb_checksum_table_mutation_detected(self):
+    """R-01 reverse regression: corrupting the CRC8 constant table MUST change the checksum.
+
+    The golden test is table-driven and cannot distinguish "algorithm right +
+    table right" from "algorithm wrong + table wrong". This test proves the
+    suite catches a systematically corrupted table (e.g. bad copy-paste).
+    """
+    class _Sig:
+      start_bit = 0
+    fixed = bytearray([0x00, 0xA5, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
+    for addr in (0x11D, 0x11E, 0x32A):
+      with self.subTest(addr=hex(addr)):
+        good = volkswagen_mlb_checksum(addr, _Sig(), fixed)
+        saved = mlbcan.MLB_CRC8_CONSTANTS[addr].copy()
+        try:
+          mlbcan.MLB_CRC8_CONSTANTS[addr] = [0xFF] * 16
+          self.assertNotEqual(volkswagen_mlb_checksum(addr, _Sig(), fixed), good,
+                              f"{hex(addr)}: corrupted table must change the checksum")
+        finally:
+          mlbcan.MLB_CRC8_CONSTANTS[addr] = saved
+
+  def test_mlb_checksum_algorithm_independent(self):
+    """R-01: recompute CRC8H2F bit-by-bit (poly 0x2F, MSB-first) without touching
+    the CRC8H2F lookup table, and compare against volkswagen_mlb_checksum.
+    Catches a corrupted lookup table that a table-driven golden cannot see.
+    """
+    def crc8h2f_bitwise(payload, trailing_const):
+      crc = 0xFF
+      for b in payload:
+        crc ^= b
+        for _ in range(8):
+          crc = ((crc << 1) ^ 0x2F) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+      crc ^= trailing_const
+      for _ in range(8):
+        crc = ((crc << 1) ^ 0x2F) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+      return crc ^ 0xFF
+
+    class _Sig:
+      start_bit = 0
+    rng = random.Random(42)
+    for addr in (0x11D, 0x11E, 0x32A):
+      for _ in range(8):
+        d = bytearray(rng.randrange(256) for _ in range(8))
+        want = crc8h2f_bitwise(d[1:], mlbcan.MLB_CRC8_CONSTANTS[addr][d[1] & 0x0F])
+        self.assertEqual(volkswagen_mlb_checksum(addr, _Sig(), d), want,
+                         f"{hex(addr)} bitwise mismatch on {d.hex()}")
 
   def test_stock_values_passthrough(self):
     """Seite/DLC/TLC/SW_Warnung must pass through from the stock camera frame."""
