@@ -185,7 +185,8 @@ def acc_hud_status_value(main_switch_on, acc_faulted, long_active, gas_pressed=F
 # B8 Kombi distance-bar display index (ACC_Abstandsindex) is a non-linear display index, not meters.
 # Calibrated from 20826 stock ACC_02(0x30C, bus2) frames paired with vision lead distance
 # across 37 local rlog segments (32-91 kph, gap settings 4/5; acc_fusion/fit_dataset.jsonl).
-# (lead distance m, 2m-bin median abidx, monotonicity-enforced). No reliable stock data
+# (lead distance m, 2m-bin median abidx). Bucket medians are monotonic; bucket spacing
+# is NOT uniform (piecewise-linear interpolation between anchors). No reliable stock data
 # below 22m or above 114m — clamped at both ends.
 _ABSTANDSINDEX_LUT = (
   (22.0, 567), (27.0, 532), (32.0, 507), (37.0, 488), (42.0, 459), (47.0, 422),
@@ -206,7 +207,7 @@ def _abstandsindex(lead_distance_m: float) -> int:
 
 
 def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance, hud_control, mlb_hud_text, announcing=False,
-                           display_armed=False):
+                           display_armed=False, stock_relevant_obj=0, stock_abstandsindex=1023):
 
   acc_active = acc_hud_status in (3, 4)
   # display_armed: stock J428 pre-frames — display fields switch to the active
@@ -214,7 +215,28 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
   # presses SET/RES). The Kombi requires this arm->activate sequence to (re)draw
   # the lead-car graphic after a cancel.
   acc_display = acc_active or display_armed
-  has_lead = acc_active and hud_control.leadVisible
+
+  # Lead-car display arbitration (B8PA): the stock J428 radar keeps publishing
+  # its own object verdict (ACC_Relevantes_Objekt 0/1/2 = none/green/red) and
+  # native distance index on the radar-side bus even while OP regulates. The
+  # display follows the radar by default; OP vision only adds a lead the radar
+  # does not see (op 0/1 can never downgrade a radar red car to green).
+  op_lead = 1 if hud_control.leadVisible else 0
+  radar_lead = int(stock_relevant_obj)
+  lead_display = max(radar_lead, op_lead, 2 if hud_control.visualAlert > 0 else 0)
+  has_lead = acc_active and lead_display > 0
+
+  if has_lead:
+    if radar_lead >= op_lead:
+      # Radar (or tie): passthrough the J428 native index untouched, including
+      # 1022/1023 special displays — that IS the stock presentation.
+      abstandsindex = int(stock_abstandsindex)
+    else:
+      # OP-only lead: fitted index from vision distance (legacy LUT path).
+      abstandsindex = _abstandsindex(lead_distance) if lead_distance > 1.0 else (1023 if acc_display else 1022)
+  else:
+    abstandsindex = 1023 if acc_display else 1022
+
   values = {
     "ACC_Status_Anzeige": acc_hud_status,
     # Stock J428 keeps the stored set speed VALID in standby after a cancel
@@ -235,7 +257,7 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
     "ACC_Gesetzte_Zeitluecke": hud_control.leadDistanceBars, # TODO: Update openpilot charisma using stock rocker switch
     "ACC_Tachokranz": 1 if acc_display else 0,
     "ACC_Typ_Tachokranz": 1,
-    "ACC_Relevantes_Objekt": 2 if hud_control.visualAlert > 0 else (1 if has_lead else 0),
+    "ACC_Relevantes_Objekt": lead_display if (acc_active or hud_control.visualAlert > 0) else 0,
     # Stock holds Status_Prim_Anz=1 essentially the whole CONTROLLING period
     # (route 0000000a/0000000f steady state) but drops it to 0 during gas
     # override (Status=4, route 0000000f t=872.37).
@@ -243,7 +265,7 @@ def create_acc_hud_control(packer, bus, acc_hud_status, set_speed, lead_distance
     "ACC_Akustik": 1 if hud_control.audibleAlert == 5 else 0, # Audible alert on OP warningImmediate
     # Stock J428 only draws the lead-car glyph when Abstandsindex carries a real distance index
     # (1023 = "road with green/red area" special display, 1022 = "grey road" special display)
-    "ACC_Abstandsindex": _abstandsindex(lead_distance) if has_lead and lead_distance > 1.0 else (1023 if acc_display else 1022),
+    "ACC_Abstandsindex": abstandsindex,
     "ACC_Texte_Primaeranz": mlb_hud_text,
   }
 
@@ -279,6 +301,8 @@ def volkswagen_mlb_checksum(address: int, sig, d: bytearray) -> int:
   # XOR checksum is seeded with the CAN address high byte XOR low byte.
   seed = (address >> 8) ^ (address & 0xFF)
   if address in (0x100, 0x101): # ESP_01, ESP_02 special case
+    # TODO(R-30): cite the stock rlog (route_id/segment/frame count) that
+    # established the 0xAA seed for ESP_01/ESP_02
     seed ^= 0xAA
 
   return xor_checksum(address, sig, d, initial_value=seed)

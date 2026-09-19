@@ -29,6 +29,11 @@ class CarState(CarStateBase):
     self.CCP = CarControllerParams(CP)
     self.button_states = {button.event_type: False for button in self.CCP.BUTTONS}
     self.esp_hold_confirmation = False
+    # J428 stock ACC_02 lead display state (radar-side bus): the radar's own
+    # object verdict (0/1/2 = none/green/red) and native distance index. The
+    # MLB ACC HUD trusts these whenever the radar reports an object.
+    self.stock_acc_relevant_obj = 0
+    self.stock_acc_abstandsindex = 1023
     self.upscale_lead_car_signal = False
     self.eps_stock_values = False
     self.acc_type = 0
@@ -355,6 +360,8 @@ class CarState(CarStateBase):
     ret.cruiseState.enabled = alt_cp.vl["TSK_04"]["TSK_Status_GRA_ACC_02"] in (1, 2)
     ret.accFaulted = alt_cp.vl["TSK_04"]["TSK_Status_GRA_ACC_02"] == 3
     ret.cruiseState.speed = ext_cp.vl["ACC_02"]["ACC_Wunschgeschw_02"] * CV.KPH_TO_MS
+    self.stock_acc_relevant_obj = int(ext_cp.vl["ACC_02"]["ACC_Relevantes_Objekt"])
+    self.stock_acc_abstandsindex = int(ext_cp.vl["ACC_02"]["ACC_Abstandsindex"])
 
     self.parse_mlb_mqb_steering_state(ret, pt_cp)
 

@@ -338,7 +338,9 @@ class CarController(CarControllerBase):
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            hud_control.leadDistance, hud_control, self.mlb_hud_text,
                                                            announcing=self.frame <= self.texte_timer,
-                                                           display_armed=display_armed))
+                                                           display_armed=display_armed,
+                                                           stock_relevant_obj=CS.stock_acc_relevant_obj,
+                                                           stock_abstandsindex=CS.stock_acc_abstandsindex))
         else:
           can_sends.append(self.CCS.create_acc_hud_control(self.packer_pt, self.CAN.pt, acc_hud_status, set_speed,
                                                            lead_distance, hud_control.leadDistanceBars))
